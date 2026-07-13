@@ -11,8 +11,9 @@ export class Hetzner extends VMManager {
   size = "cx33";
   // keep existing server pools of cpx11 (US), disable deletion to keep pricing
   // add new HetznerEU as default free pool using cx33
-  // premium pool updated to cpx32 (available in all regions), legacy servers use cpx31
+  // premium pool updated to cpx32 (available in EU), legacy US servers use cpx31
   largeSize = "cpx32";
+  largeSizeUS = "cpx31";
   minRetries = 5;
   reuseVMs = true;
   id = "Hetzner";
@@ -31,9 +32,13 @@ export class Hetzner extends VMManager {
   }
 
   startVM = async (name: string) => {
+    let size = this.isLarge ? this.largeSize : this.size;
+    if (this.isLarge && (this.region === "US" || this.region === "USW")) {
+      size = this.largeSizeUS;
+    }
     const data = {
       name: name,
-      server_type: this.isLarge ? this.largeSize : this.size,
+      server_type: size,
       start_after_create: true,
       image: Number(this.imageId),
       ssh_keys: sshKeys,
