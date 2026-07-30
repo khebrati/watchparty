@@ -4,6 +4,7 @@ import { SignInButton } from "../TopBar/TopBar";
 import config from "../../config";
 import { MetadataContext } from "../../MetadataContext";
 import { IconBrandStripeFilled, IconCheck } from "@tabler/icons-react";
+import { serverPath } from "../../utils/utils";
 
 export class SubscribeModal extends React.Component<{
   closeSubscribe: () => void;
@@ -13,7 +14,7 @@ export class SubscribeModal extends React.Component<{
   onSubscribe = async () => {
     try {
       const user = this.context.user;
-      const resp = await fetch(`${config.VITE_SERVER_HOST}/checkoutSub`, {
+      const resp = await fetch(`${serverPath}/checkoutSub`, {
         credentials: "include",
         method: "POST",
         headers: {
