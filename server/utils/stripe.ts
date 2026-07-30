@@ -1,8 +1,8 @@
 import config from "../config.ts";
 import Stripe from "stripe";
 
-const stripe = new Stripe(config.STRIPE_SECRET_KEY, {
-  apiVersion: "2020-08-27",
+export const stripe = new Stripe(config.STRIPE_SECRET_KEY, {
+  apiVersion: "2022-11-15",
 });
 
 export async function getCustomerByEmail(email: string) {

@@ -14,6 +14,7 @@ import {
   getCustomerByEmail,
   createSelfServicePortal,
   getIsSubscriberByEmail,
+  stripe,
 } from "./utils/stripe.ts";
 import { deleteUser, validateUserToken } from "./utils/firebase.ts";
 import path from "node:path";
@@ -326,6 +327,27 @@ app.post("/createRoom", async (req, res) => {
   }
   rooms.set(name, newRoom);
   res.json({ name });
+});
+
+app.post("/checkoutSub", async (req, res) => {
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    client_reference_id: req.body.uid,
+    customer_email: req.body.email ?? undefined,
+    line_items: [
+      {
+        price:
+          config.NODE_ENV === "development"
+            ? "price_HNGtabCzD5qyfd"
+            : "price_HNDBoPDI7yYRi9",
+        quantity: 1,
+      },
+    ],
+    // Redirect back to the user's room, passed in the body
+    success_url: req.body.return_url,
+    cancel_url: req.body.return_url,
+  });
+  res.json({ url: session.url });
 });
 
 app.post("/manageSub", async (req, res) => {
