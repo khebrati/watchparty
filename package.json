@@ -21,7 +21,7 @@
     "analyze": "npx source-map-explorer 'build/assets/*.js' --html result.html --no-border-checks",
     "test:backend": "node --test server/hambin/tests/*.test.ts",
     "start:hambin": "HAMBIN_MODE=true node server/server.ts",
-    "test:integration": "HAMBIN_INTEGRATION=true node --test server/hambin/tests/integration.test.ts"
+    "test:integration": "HAMBIN_INTEGRATION=true node --test --test-concurrency=1 server/hambin/tests/*.integration.test.ts server/hambin/tests/integration.test.ts"
   },
   "dependencies": {
     "@googleapis/youtube": "^8.0.2",

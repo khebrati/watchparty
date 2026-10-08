@@ -8,11 +8,18 @@ import type { AuthProvider, Session } from "./auth.ts";
 import type { Identities } from "./db.ts";
 import { profile } from "./db.ts";
 import { ApiError } from "./errors.ts";
+import type { Rooms } from "./rooms.ts";
 export interface AuthenticatedRequest extends Request {
   session: Session;
 }
 export interface Dependencies {
   auth: AuthProvider;
+  rooms?: Rooms;
+  issueRoomTicket?(
+    uid: string,
+    session: Session,
+    roomId: string,
+  ): Promise<unknown>;
   identities: Identities;
   databaseReady(): Promise<boolean>;
   // Phase 3 installs membership/ticket/socket cleanup, and dispatcher health.
@@ -113,7 +120,58 @@ export function createApplication(configuration: Config, deps: Dependencies) {
       voice: deps.voiceAvailable?.() ? ["MESH"] : [],
     });
   });
-  // Exposed for subsequent phase routes; clients never receive unavailable capabilities.
+  if (deps.rooms) {
+    const rooms = deps.rooms;
+    const uid = (req: Request) => (req as AuthenticatedRequest).session.uid;
+    const key = (req: Request) => req.get("Idempotency-Key");
+    const param = (req: Request, name: string) => String(req.params[name]);
+    api.post("/rooms", async (req, res) => {
+      const result = await rooms.create(uid(req), req.body?.title, key(req));
+      res.status(result.status).json(result.body);
+    });
+    api.get("/rooms/:code/preview", async (req, res) => {
+      res.json(await rooms.preview(uid(req), param(req, "code")));
+    });
+    api.post("/rooms/:code/join", async (req, res) => {
+      const result = await rooms.join(uid(req), param(req, "code"), key(req));
+      res.status(result.status).json(result.body);
+    });
+    api.get("/rooms/:roomId/snapshot", async (req, res) => {
+      res.json(await rooms.snapshot(uid(req), param(req, "roomId")));
+    });
+    api.post("/rooms/:roomId/leave", async (req, res) => {
+      res.json(await rooms.leave(uid(req), param(req, "roomId")));
+    });
+    for (const action of ["start", "abort"] as const) {
+      api.post(`/rooms/:roomId/stream/${action}`, async (req, res) => {
+        const result = await rooms.stream(
+          uid(req),
+          param(req, "roomId"),
+          action,
+          req.body ?? {},
+          key(req),
+        );
+        res.status(result.status).json(result.body);
+      });
+    }
+    api.post(
+      "/rooms/:roomId/realtime-ticket",
+      limit("ticket", 60),
+      async (req, res) => {
+        if (!deps.issueRoomTicket) throw new ApiError(503, "UNAVAILABLE");
+        res
+          .status(201)
+          .json(
+            await deps.issueRoomTicket(
+              uid(req),
+              (req as AuthenticatedRequest).session,
+              param(req, "roomId"),
+            ),
+          );
+      },
+    );
+  }
+  // Clients never receive unavailable capabilities.
   app.use("/v1", api);
   app.use((req, res, next) => next(new ApiError(404, "NOT_FOUND")));
   const errors: ErrorRequestHandler = (error, req, res, next) => {
