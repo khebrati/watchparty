@@ -1,11 +1,11 @@
 import config from "../config.ts";
-import admin from "firebase-admin";
+import { initializeApp, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+import { getDatabase } from "firebase-admin/database";
 
 if (config.FIREBASE_ADMIN_SDK_CONFIG) {
-  admin.initializeApp({
-    credential: admin.credential.cert(
-      JSON.parse(config.FIREBASE_ADMIN_SDK_CONFIG),
-    ),
+  initializeApp({
+    credential: cert(JSON.parse(config.FIREBASE_ADMIN_SDK_CONFIG)),
     databaseURL: config.FIREBASE_DATABASE_URL,
   });
 }
@@ -18,7 +18,7 @@ export async function validateUserToken(uid: string, token: string) {
     return undefined;
   }
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
     if (uid !== decoded.uid) {
       // Valid but for wrong user
       return undefined;
@@ -35,19 +35,19 @@ export async function writeData(key: string, value: string) {
   if (!config.FIREBASE_ADMIN_SDK_CONFIG) {
     return;
   }
-  await admin.database().ref(key).set(value);
+  await getDatabase().ref(key).set(value);
 }
 
 export async function getUser(uid: string) {
   if (!config.FIREBASE_ADMIN_SDK_CONFIG) {
     return null;
   }
-  return await admin.auth().getUser(uid);
+  return await getAuth().getUser(uid);
 }
 
 export async function deleteUser(uid: string) {
   if (!config.FIREBASE_ADMIN_SDK_CONFIG) {
     return null;
   }
-  return admin.auth().deleteUser(uid);
+  return getAuth().deleteUser(uid);
 }

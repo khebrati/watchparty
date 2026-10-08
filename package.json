@@ -18,7 +18,10 @@
     "updateSnapshot": "curl -X POST localhost:3100/updateSnapshot -H 'Content-Type: application/json' -d '{\"provider\":\"Hetzner\",\"region\":\"US\"}'",
     "testvBrowser": "docker run -d --rm --name=vbrowser --log-opt max-size=1g --net=host --shm-size=1g --cap-add=\"SYS_ADMIN\" -e DISPLAY=\":99.0\" -e NEKO_PASSWORD=user -e NEKO_PASSWORD_ADMIN=admin -e NEKO_BIND=\":5100\" -e NEKO_EPR=\":59000-59100\" -e NEKO_H264=\"1\" howardc93/vbrowser",
     "testvlc": "docker run -d --rm --name=vlc --log-opt max-size=1g --net=host -e VLC_MEDIA=\"https://github.com/ietf-wg-cellar/matroska-test-files/raw/master/test_files/test1.mkv\" -e NEKO_PASSWORD=user -e NEKO_PASSWORD_ADMIN=admin -e NEKO_BIND=\":5100\" -e NEKO_EPR=\":59000-59100\" -e NEKO_H264=\"1\" m1k1o/neko:vlc",
-    "analyze": "npx source-map-explorer 'build/assets/*.js' --html result.html --no-border-checks"
+    "analyze": "npx source-map-explorer 'build/assets/*.js' --html result.html --no-border-checks",
+    "test:backend": "node --test server/hambin/tests/*.test.ts",
+    "start:hambin": "HAMBIN_MODE=true node server/server.ts",
+    "test:integration": "HAMBIN_INTEGRATION=true node --test server/hambin/tests/integration.test.ts"
   },
   "dependencies": {
     "@googleapis/youtube": "^8.0.2",
@@ -28,7 +31,7 @@
     "cors": "^2.8.5",
     "discord.js": "^14.25.1",
     "express": "^5.2.1",
-    "firebase-admin": "^11.11.1",
+    "firebase-admin": "14.5.0",
     "ioredis": "^5.8.2",
     "node-ssh": "^13.2.1",
     "pg": "^8.16.3",
@@ -87,5 +90,10 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
-  }
+  },
+  "engines": {
+    "node": "24.18.x",
+    "npm": "11.16.x"
+  },
+  "packageManager": "npm@11.16.0"
 }
