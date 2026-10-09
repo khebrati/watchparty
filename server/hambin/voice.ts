@@ -26,6 +26,15 @@ interface IceServer {
   credential?: string;
 }
 
+interface PeerPairEpoch {
+  lowerMembershipId: string;
+  lowerVoiceGeneration: string;
+  higherMembershipId: string;
+  higherVoiceGeneration: string;
+  lowerPeerGeneration?: number;
+  higherPeerGeneration?: number;
+}
+
 const jsonError = (error: unknown) => error instanceof ApiError
   ? { code: error.code, message: error.message }
   : { code: "INTERNAL_ERROR", message: "Internal server error" };
@@ -37,6 +46,7 @@ export class MeshVoice {
   readonly connections = new Map<string, VoiceConnection>();
   private readonly generations = new Map<string, string>();
   private readonly muted = new Map<string, boolean>();
+  private readonly peerEpochs = new Map<string, PeerPairEpoch>();
   private closing = false;
   private pendingDetaches = new Set<Promise<unknown>>();
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -92,6 +102,7 @@ export class MeshVoice {
     } else {
       generation = randomUUID();
       this.generations.set(key, generation);
+      this.clearPeerEpochsForMembership(key);
       this.tickets.forEach((ticket, secret) => {
         if (ticket.membershipId === key) this.tickets.delete(secret);
       });
@@ -237,11 +248,23 @@ export class MeshVoice {
       try { message = JSON.parse((body as any).msg); } catch { throw new ApiError(400, "INVALID_JSON"); }
       if (!message || message.generation !== connection.generation || typeof message.targetGeneration !== "string")
         throw new ApiError(401, "SESSION_EXPIRED");
+      const peerGeneration = message.peerGeneration;
+      const targetPeerGeneration = message.targetPeerGeneration;
+      if (!Number.isSafeInteger(peerGeneration) || peerGeneration <= 0 ||
+          !Number.isSafeInteger(targetPeerGeneration) || targetPeerGeneration < 0)
+        throw new ApiError(400, "INVALID_JSON");
       const content = message.sdp ?? message.ice;
       if (Number(!!message.sdp) + Number(!!message.ice) + Number(message.restart === true) !== 1)
         throw new ApiError(400, "INVALID_JSON");
-      if (message.sdp && (typeof content.sdp !== "string" || Buffer.byteLength(content.sdp) > 60000 || !["offer", "answer", "pranswer", "rollback"].includes(content.type)))
-        throw new ApiError(400, "INVALID_JSON");
+      if (message.sdp) {
+        if (typeof content.sdp !== "string" || Buffer.byteLength(content.sdp) > 60000 || !["offer", "answer"].includes(content.type))
+          throw new ApiError(400, "INVALID_JSON");
+        const mediaSections = content.sdp.split(/\r?\n/).filter((line: string) => line.startsWith("m="));
+        // This endpoint carries microphone-only peer negotiation. Reject video,
+        // data channels, and unknown media even if a non-Android client connects.
+        if (mediaSections.length !== 1 || !/^m=audio\s/i.test(mediaSections[0]))
+          throw new ApiError(400, "INVALID_JSON");
+      }
       if (message.ice && (typeof content.candidate !== "string" || content.candidate.length > 4096 || (content.sdpMid !== null && typeof content.sdpMid !== "string") || (content.sdpMLineIndex !== null && !Number.isInteger(content.sdpMLineIndex))))
         throw new ApiError(400, "INVALID_JSON");
       if (!message.sdp && !message.ice && message.restart !== true)
@@ -251,6 +274,44 @@ export class MeshVoice {
         throw new ApiError(403, "FORBIDDEN");
       await this.rooms.active(connection.uid, connection.roomId, connection.membershipId, "voice", connection.generation);
       await this.rooms.active(target.uid, target.roomId, target.membershipId, "voice", target.generation);
+      const lower = connection.membershipId < target.membershipId ? connection : target;
+      const higher = lower === connection ? target : connection;
+      const pairKey = [connection.roomId, lower.membershipId, lower.generation, higher.membershipId, higher.generation].join(":");
+      let epoch = this.peerEpochs.get(pairKey);
+      if (!epoch) {
+        epoch = {
+          lowerMembershipId: lower.membershipId,
+          lowerVoiceGeneration: lower.generation,
+          higherMembershipId: higher.membershipId,
+          higherVoiceGeneration: higher.generation,
+        };
+        this.peerEpochs.set(pairKey, epoch);
+      }
+      const senderIsLower = connection === lower;
+      if (message.sdp?.type === "offer") {
+        if (!senderIsLower || targetPeerGeneration !== 0 && targetPeerGeneration !== epoch.higherPeerGeneration ||
+            epoch.lowerPeerGeneration !== undefined && peerGeneration <= epoch.lowerPeerGeneration)
+          throw new ApiError(409, "STALE_NEGOTIATION");
+        epoch.lowerPeerGeneration = peerGeneration;
+      } else if (message.sdp?.type === "answer") {
+        if (senderIsLower || epoch.lowerPeerGeneration === undefined || targetPeerGeneration !== epoch.lowerPeerGeneration ||
+            epoch.higherPeerGeneration !== undefined && peerGeneration < epoch.higherPeerGeneration)
+          throw new ApiError(409, "STALE_NEGOTIATION");
+        epoch.higherPeerGeneration = peerGeneration;
+      } else if (message.ice) {
+        const currentSenderGeneration = senderIsLower ? epoch.lowerPeerGeneration : epoch.higherPeerGeneration;
+        const currentTargetGeneration = senderIsLower ? epoch.higherPeerGeneration : epoch.lowerPeerGeneration;
+        // ICE may precede its SDP on the wire. Permit only unbound candidates
+        // to use target generation 0; bound candidates must match the current pair.
+        if (currentSenderGeneration !== undefined && peerGeneration !== currentSenderGeneration ||
+            targetPeerGeneration !== 0 && targetPeerGeneration !== currentTargetGeneration)
+          throw new ApiError(409, "STALE_NEGOTIATION");
+      } else if (message.restart === true) {
+        const currentSenderGeneration = senderIsLower ? epoch.lowerPeerGeneration : epoch.higherPeerGeneration;
+        const currentTargetGeneration = senderIsLower ? epoch.higherPeerGeneration : epoch.lowerPeerGeneration;
+        if (currentSenderGeneration !== peerGeneration || currentTargetGeneration === undefined || targetPeerGeneration !== currentTargetGeneration)
+          throw new ApiError(409, "STALE_NEGOTIATION");
+      }
       target.socket.emit("signal", { from: connection.membershipId, msg: (body as any).msg });
       ack?.({ ok: true });
     } catch (error) { ack?.(jsonError(error)); }
@@ -328,8 +389,14 @@ export class MeshVoice {
     this.muted.delete(id);
     for (const [secret, ticket] of this.tickets) if (ticket.membershipId === id) this.tickets.delete(secret);
     this.connections.get(id)?.socket.disconnect(true);
+    this.clearPeerEpochsForMembership(id);
+  }
+  private clearPeerEpochsForMembership(id: string) {
+    for (const [key, epoch] of this.peerEpochs)
+      if (epoch.lowerMembershipId === id || epoch.higherMembershipId === id) this.peerEpochs.delete(key);
   }
   private removeRoom(roomId: string) {
+    for (const [key] of this.peerEpochs) if (key.startsWith(`${roomId}:`)) this.peerEpochs.delete(key);
     const memberships = new Set<string>();
     for (const [secret, ticket] of this.tickets) {
       if (ticket.roomId === roomId) {

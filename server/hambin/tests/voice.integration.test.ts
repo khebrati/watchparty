@@ -109,15 +109,49 @@ test("voice configuration, ticket lifecycle, independent role, mute and scoped s
     const unmutedRoster = await unmutedRosterEvent;
     assert.equal(unmutedRoster.members.find((member: any) => member.membershipId === ownerConfig.membershipId).muted, false);
 
-    const signal = { generation: ownerConfig.voiceSessionId, targetGeneration: guestConfig.voiceSessionId, sdp: { type: "offer", sdp: "v=0\r\n" } };
-    const inbound = waitEvent<any>(guestSocket, "signal");
-    assert.deepEqual(await rpc(ownerSocket, "signal", { to: guestConfig.membershipId, msg: JSON.stringify(signal) }), { ok: true });
+    const ownerIsOfferer = ownerConfig.membershipId < guestConfig.membershipId;
+    const offererSocket = ownerIsOfferer ? ownerSocket : guestSocket;
+    const answererSocket = ownerIsOfferer ? guestSocket : ownerSocket;
+    const offererConfig = ownerIsOfferer ? ownerConfig : guestConfig;
+    const answererConfig = ownerIsOfferer ? guestConfig : ownerConfig;
+    const signal = {
+      generation: offererConfig.voiceSessionId,
+      targetGeneration: answererConfig.voiceSessionId,
+      peerGeneration: 1,
+      targetPeerGeneration: 0,
+      sdp: { type: "offer", sdp: "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" },
+    };
+    const inbound = waitEvent<any>(answererSocket, "signal");
+    assert.deepEqual(await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(signal) }), { ok: true });
     const received = await inbound;
-    assert.equal(received.from, ownerConfig.membershipId);
+    assert.equal(received.from, offererConfig.membershipId);
     assert.deepEqual(JSON.parse(received.msg), signal);
-    assert.equal((await rpc(ownerSocket, "signal", { to: guestConfig.membershipId, msg: JSON.stringify({ ...signal, targetGeneration: "00000000-0000-4000-8000-000000000000" }) })).code, "FORBIDDEN");
-    assert.equal((await rpc(ownerSocket, "signal", { to: guestConfig.membershipId, msg: "x".repeat(65537) })).code, "PAYLOAD_TOO_LARGE");
-    assert.equal((await rpc(ownerSocket, "signal", { to: ownerConfig.membershipId, msg: JSON.stringify(signal) })).code, "FORBIDDEN");
+    const videoSdp = { ...signal, sdp: { type: "offer", sdp: "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n" } };
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(videoSdp) })).code, "INVALID_JSON");
+    const dataChannelSdp = { ...signal, sdp: { type: "offer", sdp: "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n" } };
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(dataChannelSdp) })).code, "INVALID_JSON");
+    const rollback = { ...signal, sdp: { type: "rollback", sdp: "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" } };
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(rollback) })).code, "INVALID_JSON");
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify({ ...signal, peerGeneration: 1.5 }) })).code, "INVALID_JSON");
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify({ ...signal, peerGeneration: 1 }) })).code, "STALE_NEGOTIATION");
+    const answer = { generation: answererConfig.voiceSessionId, targetGeneration: offererConfig.voiceSessionId, peerGeneration: 1, targetPeerGeneration: 1,
+      sdp: { type: "answer", sdp: "v=0\r\no=- 2 2 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" } };
+    assert.deepEqual(await rpc(answererSocket, "signal", { to: offererConfig.membershipId, msg: JSON.stringify(answer) }), { ok: true });
+    const restart = { generation: offererConfig.voiceSessionId, targetGeneration: answererConfig.voiceSessionId,
+      peerGeneration: 1, targetPeerGeneration: 1, restart: true };
+    assert.deepEqual(await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(restart) }), { ok: true });
+    const replacementOffer = { ...signal, peerGeneration: 2 };
+    assert.deepEqual(await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(replacementOffer) }), { ok: true });
+    const staleIce = { generation: offererConfig.voiceSessionId, targetGeneration: answererConfig.voiceSessionId, peerGeneration: 1, targetPeerGeneration: 2,
+      ice: { candidate: "candidate:1 1 UDP 1 127.0.0.1 9 typ host", sdpMid: "0", sdpMLineIndex: 0 } };
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(staleIce) })).code, "STALE_NEGOTIATION");
+    const replacementAnswer = { ...answer, peerGeneration: 2, targetPeerGeneration: 2 };
+    assert.deepEqual(await rpc(answererSocket, "signal", { to: offererConfig.membershipId, msg: JSON.stringify(replacementAnswer) }), { ok: true });
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify(restart) })).code, "STALE_NEGOTIATION");
+    assert.equal((await rpc(answererSocket, "signal", { to: offererConfig.membershipId, msg: JSON.stringify({ ...signal, generation: answererConfig.voiceSessionId, targetGeneration: offererConfig.voiceSessionId }) })).code, "STALE_NEGOTIATION");
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: JSON.stringify({ ...signal, targetGeneration: "00000000-0000-4000-8000-000000000000" }) })).code, "FORBIDDEN");
+    assert.equal((await rpc(offererSocket, "signal", { to: answererConfig.membershipId, msg: "x".repeat(65537) })).code, "PAYLOAD_TOO_LARGE");
+    assert.equal((await rpc(offererSocket, "signal", { to: offererConfig.membershipId, msg: JSON.stringify(signal) })).code, "FORBIDDEN");
 
     // Replacing just the voice generation disconnects its old socket and preserves the room lease.
     const replacementResponse = await request(owner, `/v1/rooms/${room.id}/voice/config`);
