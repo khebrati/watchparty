@@ -59,7 +59,8 @@ export class Realtime {
     this.auth = auth;
     this.io = new Server(server, {
       transports: ["websocket"],
-      maxHttpBufferSize: 8192,
+      // Room commands enforce their own 8 KiB limit; voice SDP has a separate 64 KiB budget.
+      maxHttpBufferSize: 72 * 1024,
       pingInterval: 10000,
       pingTimeout: 10000,
       serveClient: false,

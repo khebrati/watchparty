@@ -27,6 +27,7 @@ export interface Dependencies {
   dispatcherReady?(): boolean;
   realtimeAvailable?(): boolean;
   voiceAvailable?(): boolean;
+  issueVoiceConfig?(uid: string, session: Session, roomId: string, voiceSessionId?: string): Promise<unknown>;
 }
 export function createApplication(configuration: Config, deps: Dependencies) {
   const app = express();
@@ -170,6 +171,19 @@ export function createApplication(configuration: Config, deps: Dependencies) {
           );
       },
     );
+    api.post("/rooms/:roomId/voice/config", limit("voice-config", 30), async (req, res) => {
+      if (!deps.issueVoiceConfig || !deps.voiceAvailable?.())
+        throw new ApiError(503, "VOICE_DISABLED");
+      const voiceSessionId = req.body?.voiceSessionId;
+      if (voiceSessionId !== undefined && (typeof voiceSessionId !== "string" || !/^[0-9a-f-]{36}$/i.test(voiceSessionId)))
+        throw new ApiError(400, "INVALID_JSON");
+      res.json(await deps.issueVoiceConfig(
+        (req as AuthenticatedRequest).session.uid,
+        (req as AuthenticatedRequest).session,
+        param(req, "roomId"),
+        voiceSessionId,
+      ));
+    });
   }
   // Clients never receive unavailable capabilities.
   app.use("/v1", api);

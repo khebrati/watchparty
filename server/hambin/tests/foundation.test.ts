@@ -24,6 +24,22 @@ test("production cannot opt into unsigned emulator auth or mismatched project co
   assert.throws(() =>
     config({ NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db" }),
   );
+  assert.throws(() => config({
+    NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db",
+    FIREBASE_PROJECT_ID: "demo-hambin", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
+    TURN_SHARED_SECRET: "too-short",
+  }));
+  assert.throws(() => config({
+    NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db",
+    FIREBASE_PROJECT_ID: "demo-hambin", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
+    TURN_URLS: "https://example.invalid",
+  }));
+  assert.deepEqual(config({
+    NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db",
+    FIREBASE_PROJECT_ID: "demo-hambin", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
+    TURN_URLS: "stun:turn.example.org:3478,turn:turn.example.org:3478?transport=udp",
+    TURN_SHARED_SECRET: "01234567890123456789012345678901",
+  }).turnUrls, ["stun:turn.example.org:3478", "turn:turn.example.org:3478?transport=udp"]);
 });
 test("profile preserves Unicode rune and UTF8 byte limits", () => {
   assert.equal(

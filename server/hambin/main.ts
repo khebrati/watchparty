@@ -5,6 +5,7 @@ import { pool, migrate, IdentityStore } from "./db.ts";
 import { createApplication } from "./app.ts";
 import { Rooms } from "./rooms.ts";
 import { Realtime } from "./realtime.ts";
+import { MeshVoice } from "./voice.ts";
 export async function start(configuration: Config = config()) {
   const db = pool(configuration.databaseUrl);
   db.on("error", () =>
@@ -14,6 +15,7 @@ export async function start(configuration: Config = config()) {
   let application: ReturnType<typeof createApplication> | undefined;
   let server: Server | undefined;
   let realtime: Realtime | undefined;
+  let voice: MeshVoice | undefined;
   let rooms: Rooms | undefined;
   let instanceLock: import("pg").PoolClient | undefined;
   let ownershipLost = false;
@@ -23,11 +25,17 @@ export async function start(configuration: Config = config()) {
     application?.drain();
     rooms?.drain();
     realtime?.quiesce();
+    voice?.drain();
     console.error(JSON.stringify({ event: "runtime_ownership_lost" }));
   };
   const cleanup = async () => {
     application?.drain();
     rooms?.drain();
+    try {
+      await voice?.close();
+    } catch {
+      console.error(JSON.stringify({ event: "voice_cleanup_failed" }));
+    }
     try {
       await realtime?.close();
     } catch {
@@ -85,9 +93,13 @@ export async function start(configuration: Config = config()) {
       issueRoomTicket: (uid, session, roomId) =>
         realtime!.ticket(uid, session, roomId),
       realtimeAvailable: () => !!realtime,
+      voiceAvailable: () => voice?.available ?? false,
+      issueVoiceConfig: (uid, session, roomId, voiceSessionId) =>
+        voice!.issue(uid, session, roomId, voiceSessionId),
       dispatcherReady: () => realtime?.healthy() ?? false,
       revokeIdentity: async (uid) => {
         realtime?.revoke(uid);
+        voice?.revoke(uid);
         await rooms!.revoke(uid);
       },
       auth,
@@ -99,6 +111,7 @@ export async function start(configuration: Config = config()) {
     });
     server = createServer(application.app);
     realtime = new Realtime(server, rooms, auth);
+    voice = new MeshVoice(realtime.io, rooms, auth, configuration);
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => {
         server!.off("listening", onListen);

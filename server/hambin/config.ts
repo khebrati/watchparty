@@ -6,6 +6,8 @@ export interface Config {
   projectId: string;
   emulatorHost?: string;
   trustedProxies: string[];
+  turnUrls: string[];
+  turnSecret?: string;
 }
 export function config(env: NodeJS.ProcessEnv = process.env): Config {
   const environment = env.NODE_ENV ?? "development";
@@ -31,6 +33,16 @@ export function config(env: NodeJS.ProcessEnv = process.env): Config {
   const port = Number(env.PORT ?? 8080);
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error("Invalid PORT");
+  const turnUrls = (env.TURN_URLS ?? "")
+    .split(",")
+    .map((url) => url.trim())
+    .filter(Boolean);
+  if (turnUrls.some((url) =>
+    !/^(?:stun|turn|turns):(?:\[[0-9a-f:]+\]|[a-z0-9.-]+)(?::[0-9]{1,5})?(?:\?transport=(?:udp|tcp))?$/i.test(url)))
+    throw new Error("TURN_URLS contains an invalid ICE URL");
+  const turnSecret = env.TURN_SHARED_SECRET || undefined;
+  if (turnSecret && Buffer.byteLength(turnSecret) < 32)
+    throw new Error("TURN_SHARED_SECRET must be at least 32 bytes");
   return {
     environment,
     projectId,
@@ -39,5 +51,7 @@ export function config(env: NodeJS.ProcessEnv = process.env): Config {
     host: env.HOST ?? "127.0.0.1",
     port,
     trustedProxies: (env.TRUSTED_PROXIES ?? "").split(",").filter(Boolean),
+    turnUrls,
+    turnSecret,
   };
 }
