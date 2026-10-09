@@ -24,7 +24,6 @@
     "test:integration": "HAMBIN_INTEGRATION=true node --test --test-concurrency=1 server/hambin/tests/*.integration.test.ts server/hambin/tests/integration.test.ts"
   },
   "dependencies": {
-    "@googleapis/youtube": "^8.0.2",
     "axios": "^1.13.2",
     "body-parser": "^1.20.4",
     "compression": "^1.8.1",
@@ -35,11 +34,11 @@
     "ioredis": "^5.8.2",
     "node-ssh": "^13.2.1",
     "pg": "^8.16.3",
-    "pm2": "^6.0.14",
     "socket.io": "^4.8.1",
     "stripe": "^11.18.0"
   },
   "devDependencies": {
+    "@googleapis/youtube": "^8.0.2",
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
     "@mantine/core": "^8.3.10",
@@ -72,6 +71,7 @@
     "react-secure-link": "^3.2.0",
     "react-transition-group": "^4.4.5",
     "recharts": "^2.15.4",
+    "pm2": "^6.0.14",
     "socket.io-client": "^4.8.1",
     "srt-webvtt": "^2.0.0",
     "twitch-m3u8": "^1.1.5",
