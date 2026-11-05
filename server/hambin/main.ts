@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { config, type Config } from "./config.ts";
-import { createAuth, type FirebaseProvider } from "./auth.ts";
+import { createAuth, type LocalAuthProvider } from "./auth.ts";
 import { pool, migrate, IdentityStore } from "./db.ts";
 import { createApplication } from "./app.ts";
 import { Rooms } from "./rooms.ts";
@@ -11,7 +11,7 @@ export async function start(configuration: Config = config()) {
   db.on("error", () =>
     console.error(JSON.stringify({ event: "database_pool_error" })),
   );
-  let auth: FirebaseProvider | undefined;
+  let auth: LocalAuthProvider | undefined;
   let application: ReturnType<typeof createApplication> | undefined;
   let server: Server | undefined;
   let realtime: Realtime | undefined;
@@ -71,8 +71,8 @@ export async function start(configuration: Config = config()) {
     }
   };
   try {
-    auth = await createAuth(configuration);
     await migrate(db);
+    auth = await createAuth(db);
     await db.query("SELECT 1");
     instanceLock = await db.connect();
     instanceLock.on("error", onLockLost);
@@ -94,8 +94,8 @@ export async function start(configuration: Config = config()) {
         realtime!.ticket(uid, session, roomId),
       realtimeAvailable: () => !!realtime,
       voiceAvailable: () => voice?.available ?? false,
-      issueVoiceConfig: (uid, session, roomId, voiceSessionId) =>
-        voice!.issue(uid, session, roomId, voiceSessionId),
+      issueVoiceConfig: (uid, session, roomId, voiceSessionId, operation) =>
+        voice!.issue(uid, session, roomId, voiceSessionId, operation),
       dispatcherReady: () => realtime?.healthy() ?? false,
       revokeIdentity: async (uid) => {
         realtime?.revoke(uid);
@@ -133,7 +133,7 @@ export async function start(configuration: Config = config()) {
     JSON.stringify({
       event: "hambin_started",
       port: configuration.port,
-      auth: configuration.emulatorHost ? "emulator" : "firebase",
+      auth: "local",
     }),
   );
   let stopping = false;
@@ -147,5 +147,5 @@ export async function start(configuration: Config = config()) {
   };
   process.once("SIGTERM", signalStop);
   process.once("SIGINT", signalStop);
-  return { server, application, db, auth, rooms, realtime, stop };
+  return { server, application, db, auth, rooms, realtime, voice, stop };
 }

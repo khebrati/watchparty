@@ -3,6 +3,7 @@ import type { Server as HttpServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AuthProvider, Session } from "./auth.ts";
 import { ApiError } from "./errors.ts";
+import { SocketCloseDiagnostics } from "./socketDiagnostics.ts";
 import { Rooms, type DurableEvent, type Row } from "./rooms.ts";
 interface Ticket {
   uid: string;
@@ -38,6 +39,7 @@ export function failure(error: unknown) {
 }
 export class Realtime {
   readonly io: Server;
+  readonly socketDiagnostics = new SocketCloseDiagnostics();
   readonly rooms: Rooms;
   readonly auth: AuthProvider;
   readonly tickets = new Map<string, Ticket>();
@@ -66,6 +68,9 @@ export class Realtime {
       serveClient: false,
       cleanupEmptyChildNamespaces: true,
     });
+    this.io.engine.on("connection", transport => {
+      transport.once("close", (reason: unknown) => this.socketDiagnostics.record("transport", "shared", reason));
+    });
     this.io.of("/").use((socket, next) => next(new Error("INVALID_NAMESPACE")));
     const parent = this.io.of(/^\/hambin\/rooms\/[0-9a-f-]{36}$/i);
     parent.use(async (socket, next) => {
@@ -74,7 +79,7 @@ export class Realtime {
         if (this.closing) throw new ApiError(503, "UNAVAILABLE");
         const packet = socket.handshake.auth;
         const secret = packet?.ticket;
-        if (typeof secret !== "string" || packet.protocolVersion !== 2)
+        if (typeof secret !== "string" || packet.protocolVersion !== 3)
           throw new ApiError(401, "INVALID_TICKET");
         ticket = this.tickets.get(secret);
         this.tickets.delete(secret);
@@ -160,7 +165,8 @@ export class Realtime {
     const old = this.connections.get(key);
     this.connections.set(key, conn);
     old?.socket.disconnect();
-    socket.on("disconnect", () => {
+    socket.on("disconnect", reason => {
+      this.socketDiagnostics.record("namespace", "room", reason);
       if (this.connections.get(key) === conn) {
         this.connections.delete(key);
         this.reports.delete(key);
@@ -177,9 +183,9 @@ export class Realtime {
           body,
           ack,
           async () => {
-            if (typeof body?.idToken !== "string")
+            if (typeof body?.accessToken !== "string")
               throw new ApiError(401, "INVALID_TOKEN");
-            const session = await this.auth.verify(body.idToken);
+            const session = await this.auth.verify(body.accessToken);
             if (session.uid !== conn.uid)
               throw new ApiError(401, "INVALID_TOKEN");
             conn.session = session;

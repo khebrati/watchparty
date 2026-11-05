@@ -35,7 +35,6 @@ test(
   { skip: !enabled, timeout: 90000 },
   async () => {
     const configuration = config();
-    assert.ok(configuration.emulatorHost);
     const running = await start({ ...configuration, port: 0 });
     const base = `http://127.0.0.1:${(running.server!.address() as { port: number }).port}`;
     const db = running.db;
@@ -45,30 +44,8 @@ test(
     const users: { uid: string; token: string; identityId: string }[] = [];
     const created: string[] = [];
     const user = async () => {
-      const response = await fetch(
-        `http://${configuration.emulatorHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=local-key`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ returnSecureToken: true }),
-        },
-      );
-      assert.equal(response.status, 200);
-      const data = await response.json();
-      const bootstrap = await fetch(base + "/v1/identities/bootstrap", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${data.idToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(profile),
-      });
-      assert.equal(bootstrap.status, 200);
-      const value = {
-        uid: data.localId,
-        token: data.idToken,
-        identityId: (await bootstrap.json()).identity.id,
-      };
+      const data = await running.auth!.create(profile);
+      const value = { uid: data.identity.id, token: data.accessToken, identityId: data.identity.id };
       users.push(value);
       return value;
     };
@@ -97,7 +74,7 @@ test(
         transports: ["websocket"],
         reconnection: false,
         forceNew: true,
-        auth: { ticket: ticket.body.ticket, protocolVersion: 2 },
+        auth: { ticket: ticket.body.ticket, protocolVersion: 3 },
       });
       sockets.push(socket);
       const snapshot = await event(socket, "snapshot");
@@ -286,7 +263,7 @@ test(
         transports: ["websocket"],
         reconnection: false,
         forceNew: true,
-        auth: { ticket: first.ticket.ticket, protocolVersion: 2 },
+        auth: { ticket: first.ticket.ticket, protocolVersion: 3 },
       });
       sockets.push(retrySocket);
       const err = await event<any>(retrySocket, "connect_error");
@@ -301,11 +278,11 @@ test(
         true,
       );
       const refreshed = await ack(replacement.socket, "auth.refresh", {
-        idToken: owner.token,
+        accessToken: owner.token,
       });
       assert.ok(refreshed.expiresAt);
       const mismatch = await ack(replacement.socket, "auth.refresh", {
-        idToken: guest.token,
+        accessToken: guest.token,
       });
       assert.equal(mismatch.code, "INVALID_TOKEN");
       await rooms.leave(owner.uid, room.id);
@@ -639,34 +616,19 @@ test(
     const rooms = running.rooms!;
     const rt = running.realtime!;
     const base = `http://127.0.0.1:${(running.server!.address() as { port: number }).port}`;
-    const signup = await fetch(
-      `http://${configuration.emulatorHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=local-key`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ returnSecureToken: true }),
-      },
-    );
-    const u = await signup.json();
-    await fetch(base + "/v1/identities/bootstrap", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${u.idToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(profile),
-    });
+    const issued = await running.auth!.create(profile);
+    const u = { localId: issued.identity.id, accessToken: issued.accessToken };
     const room = (await rooms.create(u.localId, "failure recovery")).body.room;
     const ticket = await rt.ticket(
       u.localId,
-      await running.auth!.verify(u.idToken),
+      await running.auth!.verify(u.accessToken),
       room.id,
     );
     const socket = io(base + ticket.namespace, {
       transports: ["websocket"],
       reconnection: false,
       forceNew: true,
-      auth: { ticket: ticket.ticket, protocolVersion: 2 },
+      auth: { ticket: ticket.ticket, protocolVersion: 3 },
     });
     await event(socket, "snapshot");
     const originalVerify = running.auth!.verify.bind(running.auth!);
@@ -703,7 +665,7 @@ test(
       assert.equal(conn.membershipId, identity);
       running.auth!.verify = originalVerify;
       const fresh = await new Promise<any>((resolve) =>
-        socket.emit("auth.refresh", { idToken: u.idToken }, resolve),
+        socket.emit("auth.refresh", { accessToken: u.accessToken }, resolve),
       );
       assert.ok(fresh.expiresAt);
       const accepted = await new Promise<any>((resolve) =>
@@ -805,8 +767,8 @@ test(
         seq,
         [...new Set(seq)].sort((a, b) => a - b),
       );
-      // Periodic revocation check (deadline forced rather than waiting a minute) disconnects disabled identities.
-      await running.auth!.auth.updateUser(u.localId, { disabled: true });
+      // Periodic revocation check (deadline forced rather than waiting a minute) disconnects revoked identities.
+      await running.auth!.revoke(u.localId);
       conn.verifiedUntil = 0;
       await until(() => !socket.connected);
     } finally {
@@ -827,27 +789,12 @@ test(
     const running = await start({ ...configuration, port: 0 });
     const rooms = running.rooms!;
     const base = `http://127.0.0.1:${(running.server!.address() as { port: number }).port}`;
-    const signup = await fetch(
-      `http://${configuration.emulatorHost}/identitytoolkit.googleapis.com/v1/accounts:signUp?key=local-key`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ returnSecureToken: true }),
-      },
-    );
-    const u = await signup.json();
-    await fetch(base + "/v1/identities/bootstrap", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${u.idToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(profile),
-    });
+    const issued = await running.auth!.create(profile);
+    const u = { localId: issued.identity.id, accessToken: issued.accessToken };
     const room = (await rooms.create(u.localId, "snapshot race")).body.room;
     const ticket = await running.realtime!.ticket(
       u.localId,
-      await running.auth!.verify(u.idToken),
+      await running.auth!.verify(u.accessToken),
       room.id,
     );
     let snapshotReady = false;
@@ -864,7 +811,7 @@ test(
       transports: ["websocket"],
       reconnection: false,
       forceNew: true,
-      auth: { ticket: ticket.ticket, protocolVersion: 2 },
+      auth: { ticket: ticket.ticket, protocolVersion: 3 },
     });
     const received: { name: string; value: any }[] = [];
     socket.on("snapshot", (value) =>

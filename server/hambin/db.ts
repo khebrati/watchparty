@@ -1,6 +1,6 @@
 import { Pool } from "pg";
 import { readFile, readdir } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { ApiError } from "./errors.ts";
 export interface Profile {
   name: string;
@@ -83,7 +83,7 @@ export async function migrate(db: Pool): Promise<void> {
     client.release();
   }
 }
-function identity(row: Record<string, any>): Identity {
+export function identity(row: Record<string, any>): Identity {
   return {
     id: row.id,
     name: row.name,
@@ -104,17 +104,12 @@ export class IdentityStore implements Identities {
     this.db = db;
   }
   async bootstrap(uid: string, initial: Profile): Promise<Identity> {
-    // Conflict update is intentionally a no-op: concurrent/returning bootstrap never overwrites a saved profile.
-    const result = await this.db.query(
-      `INSERT INTO identities(id,firebase_uid,name,avatar,language) VALUES($1,$2,$3,$4,$5)
-      ON CONFLICT(firebase_uid) DO UPDATE SET firebase_uid=EXCLUDED.firebase_uid RETURNING *`,
-      [randomUUID(), uid, initial.name, initial.avatar, initial.language],
-    );
-    return identity(result.rows[0]);
+    // Session creation owns identity insertion; bootstrap only restores this identity.
+    return this.get(uid);
   }
   async get(uid: string): Promise<Identity> {
     const result = await this.db.query(
-      "SELECT * FROM identities WHERE firebase_uid=$1",
+      "SELECT * FROM identities WHERE id=$1",
       [uid],
     );
     if (!result.rowCount) throw new ApiError(404, "IDENTITY_NOT_FOUND");
@@ -122,7 +117,7 @@ export class IdentityStore implements Identities {
   }
   async update(uid: string, value: Profile): Promise<Identity> {
     const result = await this.db.query(
-      "UPDATE identities SET name=$2,avatar=$3,language=$4,updated_at=now() WHERE firebase_uid=$1 RETURNING *",
+      "UPDATE identities SET name=$2,avatar=$3,language=$4,updated_at=now() WHERE id=$1 RETURNING *",
       [uid, value.name, value.avatar, value.language],
     );
     if (!result.rowCount) throw new ApiError(404, "IDENTITY_NOT_FOUND");

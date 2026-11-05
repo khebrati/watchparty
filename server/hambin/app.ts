@@ -2,11 +2,13 @@ import express, {
   type ErrorRequestHandler,
   type Request,
   type RequestHandler,
+  type Response,
 } from "express";
 import type { Config } from "./config.ts";
 import type { AuthProvider, Session } from "./auth.ts";
 import type { Identities } from "./db.ts";
 import { profile } from "./db.ts";
+import { REFRESH_TTL_MS, type IssuedSession } from "./auth.ts";
 import { ApiError } from "./errors.ts";
 import type { Rooms } from "./rooms.ts";
 export interface AuthenticatedRequest extends Request {
@@ -27,13 +29,52 @@ export interface Dependencies {
   dispatcherReady?(): boolean;
   realtimeAvailable?(): boolean;
   voiceAvailable?(): boolean;
-  issueVoiceConfig?(uid: string, session: Session, roomId: string, voiceSessionId?: string): Promise<unknown>;
+  issueVoiceConfig?(uid: string, session: Session, roomId: string, voiceSessionId?: string, operation?: "join" | "resume" | "refresh"): Promise<unknown>;
 }
 export function createApplication(configuration: Config, deps: Dependencies) {
   const app = express();
   const api = express.Router();
   app.disable("x-powered-by");
   app.set("trust proxy", configuration.trustedProxies);
+  const cookieName = configuration.environment === "development" ? "roomio-refresh" : "__Host-roomio-refresh";
+  const browserRequest = (req: Request): boolean => {
+    const origin = req.get("Origin");
+    const browser = req.get("X-Roomio-Client") === "browser";
+    if (origin || browser) {
+      if (!browser || !origin || !configuration.allowedOrigins.includes(origin)) throw new ApiError(403, "FORBIDDEN");
+      return true;
+    }
+    return false;
+  };
+  const readCookie = (req: Request): string | undefined => {
+    const values = (req.get("Cookie") ?? "").split(";").map(x => x.trim()).filter(x => x.startsWith(cookieName + "="));
+    if (values.length !== 1) return undefined;
+    return values[0].slice(cookieName.length + 1);
+  };
+  const cookieOptions = { httpOnly: true, secure: configuration.environment !== "development", sameSite: "strict" as const, path: "/" };
+  const sendSession = (res: Response, result: IssuedSession, browser: boolean, status = 200) => {
+    res.setHeader("Cache-Control", "no-store");
+    if (browser) {
+      res.cookie(cookieName, result.refreshToken, { ...cookieOptions, maxAge: REFRESH_TTL_MS });
+      const { refreshToken, ...payload } = result;
+      res.status(status).json(payload);
+    } else res.status(status).json(result);
+  };
+  // Cookie credentials are accepted only on the browser session routes. Product APIs use bearer access tokens.
+  app.use((req, res, next) => {
+    const origin = req.get("Origin");
+    if (origin && configuration.allowedOrigins.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.vary("Origin");
+      if (req.method === "OPTIONS") {
+        res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Idempotency-Key,X-Roomio-Client");
+        res.status(204).end(); return;
+      }
+    }
+    next();
+  });
   const budgets = new Map<string, { count: number; reset: number }>();
   const timer = setInterval(() => {
     const now = Date.now();
@@ -89,6 +130,34 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     );
     next();
   };
+  api.post("/guest-sessions", limit("session-create", 20), async (req, res) => {
+    if (draining) throw new ApiError(503, "UNAVAILABLE");
+    const browser = browserRequest(req);
+    if (!deps.auth.create) throw new ApiError(503, "AUTH_UNAVAILABLE");
+    // An existing cookie must be restored or explicitly reset, never replaced by signup.
+    if (browser && readCookie(req)) throw new ApiError(409, "SESSION_EXISTS");
+    sendSession(res, await deps.auth.create(profile(req.body)), browser, 201);
+  });
+  api.post("/guest-sessions/refresh", limit("session-refresh", 120), async (req, res) => {
+    if (draining) throw new ApiError(503, "UNAVAILABLE");
+    const browser = browserRequest(req);
+    if (!deps.auth.refresh) throw new ApiError(503, "AUTH_UNAVAILABLE");
+    const refresh = browser ? readCookie(req) : req.body?.refreshToken;
+    if (typeof refresh !== "string" || !refresh) throw new ApiError(401, "UNAUTHENTICATED");
+    sendSession(res, await deps.auth.refresh(refresh), browser);
+  });
+  api.post("/guest-sessions/reset", limit("session-reset", 10), async (req, res) => {
+    if (draining) throw new ApiError(503, "UNAVAILABLE");
+    if (!browserRequest(req)) throw new ApiError(403, "FORBIDDEN");
+    const refresh = readCookie(req);
+    if (refresh && deps.auth.reset) {
+      const uid = await deps.auth.reset(refresh);
+      if (uid) await deps.revokeIdentity?.(uid);
+    }
+    res.clearCookie(cookieName, cookieOptions);
+    res.setHeader("Cache-Control", "no-store");
+    res.status(204).end();
+  });
   api.use(limit("api", 120), authenticate);
   api.post("/identities/bootstrap", limit("profile", 30), async (req, res) => {
     const { uid } = (req as AuthenticatedRequest).session;
@@ -112,11 +181,14 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     const { uid } = (req as AuthenticatedRequest).session;
     await deps.auth.revoke(uid);
     await deps.revokeIdentity?.(uid);
+    res.clearCookie(cookieName, cookieOptions);
+    res.setHeader("Cache-Control", "no-store");
     res.status(204).end();
   });
   api.get("/capabilities", (req, res) => {
     res.json({
-      protocolVersion: 2,
+      protocolVersion: 3,
+      voiceProtocolVersion: 4,
       realtime: deps.realtimeAvailable?.() ? ["socket.io"] : [],
       voice: deps.voiceAvailable?.() ? ["MESH"] : [],
     });
@@ -175,6 +247,8 @@ export function createApplication(configuration: Config, deps: Dependencies) {
       if (!deps.issueVoiceConfig || !deps.voiceAvailable?.())
         throw new ApiError(503, "VOICE_DISABLED");
       const voiceSessionId = req.body?.voiceSessionId;
+      const operation = req.body?.operation ?? (voiceSessionId ? "resume" : "join");
+      if (!["join", "resume", "refresh"].includes(operation) || operation !== "join" && !voiceSessionId) throw new ApiError(400, "INVALID_JSON");
       if (voiceSessionId !== undefined && (typeof voiceSessionId !== "string" || !/^[0-9a-f-]{36}$/i.test(voiceSessionId)))
         throw new ApiError(400, "INVALID_JSON");
       res.json(await deps.issueVoiceConfig(
@@ -182,6 +256,7 @@ export function createApplication(configuration: Config, deps: Dependencies) {
         (req as AuthenticatedRequest).session,
         param(req, "roomId"),
         voiceSessionId,
+        operation,
       ));
     });
   }

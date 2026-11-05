@@ -9,37 +9,21 @@ import { createApplication } from "../app.ts";
 const configuration = config({
   NODE_ENV: "test",
   DATABASE_URL: "postgresql://localhost/test",
-  FIREBASE_PROJECT_ID: "demo-hambin",
-  FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
 });
-test("production cannot opt into unsigned emulator auth or mismatched project config", () => {
-  assert.throws(() =>
-    config({
-      NODE_ENV: "production",
-      DATABASE_URL: "postgresql://localhost/db",
-      FIREBASE_PROJECT_ID: "demo-hambin",
-      FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
-    }),
-  );
-  assert.throws(() =>
-    config({ NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db" }),
-  );
-  assert.throws(() => config({
-    NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db",
-    FIREBASE_PROJECT_ID: "demo-hambin", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
-    TURN_SHARED_SECRET: "too-short",
-  }));
-  assert.throws(() => config({
-    NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db",
-    FIREBASE_PROJECT_ID: "demo-hambin", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
-    TURN_URLS: "https://example.invalid",
-  }));
-  assert.deepEqual(config({
-    NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/db",
-    FIREBASE_PROJECT_ID: "demo-hambin", FIREBASE_AUTH_EMULATOR_HOST: "127.0.0.1:9099",
-    TURN_URLS: "stun:turn.example.org:3478,turn:turn.example.org:3478?transport=udp",
-    TURN_SHARED_SECRET: "01234567890123456789012345678901",
-  }).turnUrls, ["stun:turn.example.org:3478", "turn:turn.example.org:3478?transport=udp"]);
+test("test and production environments use HTTPS origins without permitting development cookies", () => {
+  for (const environment of ["test", "production"]) {
+    const value = config({ NODE_ENV: environment, DATABASE_URL: "postgresql://localhost/db" });
+    assert.deepEqual(value.allowedOrigins, ["https://watchparty.top"]);
+    assert.throws(() => config({ NODE_ENV: environment, DATABASE_URL: "postgresql://localhost/db", AUTH_ALLOWED_ORIGINS: "http://localhost:5173" }));
+  }
+  assert.doesNotThrow(() => config({ NODE_ENV: "development", DATABASE_URL: "postgresql://localhost/db", AUTH_ALLOWED_ORIGINS: "http://localhost:5173" }));
+});
+test("configuration rejects unsafe origins and malformed TURN settings", () => {
+  assert.doesNotThrow(() => config({ NODE_ENV: "production", DATABASE_URL: "postgresql://localhost/db" }));
+  assert.throws(() => config({ NODE_ENV: "production", DATABASE_URL: "postgresql://localhost/db", AUTH_ALLOWED_ORIGINS: "http://localhost:5173" }));
+  assert.throws(() => config({ DATABASE_URL: "postgresql://localhost/db", AUTH_ALLOWED_ORIGINS: "https://example.org/path" }));
+  assert.throws(() => config({ DATABASE_URL: "postgresql://localhost/db", TURN_SHARED_SECRET: "too-short" }));
+  assert.throws(() => config({ DATABASE_URL: "postgresql://localhost/db", TURN_URLS: "https://example.invalid" }));
 });
 test("profile preserves Unicode rune and UTF8 byte limits", () => {
   assert.equal(
@@ -56,17 +40,9 @@ test("profile preserves Unicode rune and UTF8 byte limits", () => {
     profile({ name: "a", avatar: "😀".repeat(9), language: "en" }),
   );
 });
-test("auth distinguishes rejected credential from provider outage", () => {
-  assert.equal(
-    authError({ code: "auth/id-token-revoked" }).code,
-    "SESSION_REVOKED",
-  );
-  assert.equal(
-    authError({ code: "auth/id-token-expired" }).code,
-    "SESSION_EXPIRED",
-  );
-  assert.equal(authError({ code: "auth/invalid-id-token" }).status, 401);
-  assert.equal(authError({ code: "app/network-error" }).status, 503);
+test("auth preserves rejected credentials and hides database failures", () => {
+  assert.equal(authError(new ApiError(401, "SESSION_REVOKED")).code, "SESSION_REVOKED");
+  assert.equal(authError(new Error("private database detail")).code, "AUTH_UNAVAILABLE");
 });
 test("HTTP mandatory auth, fail-closed outage, readiness, bootstrap and disabled stock routes", async () => {
   let ready = true;
@@ -88,7 +64,7 @@ test("HTTP mandatory auth, fail-closed outage, readiness, bootstrap and disabled
         if (token === "outage") throw new ApiError(503, "AUTH_UNAVAILABLE");
         if (token !== "valid") throw new ApiError(401, "INVALID_TOKEN");
         return {
-          uid: "firebase-not-uuid",
+          uid: "internal-uuid",
           token,
           expiresAt: Date.now() + 60000,
           authTime: Date.now(),
@@ -135,7 +111,8 @@ test("HTTP mandatory auth, fail-closed outage, readiness, bootstrap and disabled
       message: "INTERNAL_ERROR",
     });
     assert.deepEqual(await (await request("/v1/capabilities")).json(), {
-      protocolVersion: 2,
+      protocolVersion: 3,
+      voiceProtocolVersion: 4,
       realtime: [],
       voice: [],
     });

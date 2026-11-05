@@ -118,7 +118,7 @@ export class Rooms {
     try {
       await c.query("BEGIN");
       const i = await c.query(
-        "SELECT * FROM identities WHERE firebase_uid=$1 FOR UPDATE",
+        "SELECT * FROM identities WHERE id=$1 FOR UPDATE",
         [uid],
       );
       if (!i.rowCount) throw new ApiError(404, "IDENTITY_NOT_FOUND");
@@ -631,7 +631,7 @@ export class Rooms {
   }
   async revoke(uid: string) {
     const active = await this.db.query(
-      "SELECT m.room_id FROM memberships m JOIN identities i ON i.id=m.identity_id WHERE i.firebase_uid=$1 AND m.left_at IS NULL",
+      "SELECT m.room_id FROM memberships m JOIN identities i ON i.id=m.identity_id WHERE i.id=$1 AND m.left_at IS NULL",
       [uid],
     );
     for (const m of active.rows) await this.leave(uid, m.room_id);
@@ -657,10 +657,10 @@ export class Rooms {
   async sweep() {
     if (!this.available) throw new ApiError(503, "UNAVAILABLE");
     const affected = await this.db.query(
-      `SELECT DISTINCT i.firebase_uid,m.room_id FROM memberships m JOIN identities i ON i.id=m.identity_id WHERE m.left_at IS NULL AND (m.grace_expires_at<=clock_timestamp() OR EXISTS(SELECT 1 FROM role_leases l WHERE l.membership_id=m.id AND l.expires_at<=clock_timestamp())) LIMIT 100`,
+      `SELECT DISTINCT i.id AS identity_id,m.room_id FROM memberships m JOIN identities i ON i.id=m.identity_id WHERE m.left_at IS NULL AND (m.grace_expires_at<=clock_timestamp() OR EXISTS(SELECT 1 FROM role_leases l WHERE l.membership_id=m.id AND l.expires_at<=clock_timestamp())) LIMIT 100`,
     );
     for (const a of affected.rows) {
-      const removedId = await this.transaction(a.firebase_uid, async (c, i) => {
+      const removedId = await this.transaction(a.identity_id, async (c, i) => {
         const r = await this.lockRoom(c, a.room_id);
         const m = await this.member(c, r, i.id, true);
         const removed = await c.query(

@@ -3,33 +3,18 @@ export interface Config {
   host: string;
   port: number;
   databaseUrl: string;
-  projectId: string;
-  emulatorHost?: string;
+  allowedOrigins: string[];
   trustedProxies: string[];
   turnUrls: string[];
   turnSecret?: string;
 }
 export function config(env: NodeJS.ProcessEnv = process.env): Config {
   const environment = env.NODE_ENV ?? "development";
-  const projectId = env.FIREBASE_PROJECT_ID;
-  if (!projectId || !/^[a-z][a-z0-9-]{4,62}$/.test(projectId))
-    throw new Error("FIREBASE_PROJECT_ID is required");
   if (!env.DATABASE_URL) throw new Error("DATABASE_URL is required");
-  if (
-    env.FIREBASE_AUTH_EMULATOR_HOST &&
-    environment !== "development" &&
-    environment !== "test"
-  )
-    throw new Error("Auth Emulator is forbidden outside development/test");
-  if (
-    env.FIREBASE_AUTH_EMULATOR_HOST &&
-    !/^[a-zA-Z0-9.-]+:[0-9]+$/.test(env.FIREBASE_AUTH_EMULATOR_HOST)
-  )
-    throw new Error("Invalid emulator address");
-  if (!env.FIREBASE_AUTH_EMULATOR_HOST && !env.GOOGLE_APPLICATION_CREDENTIALS)
-    throw new Error(
-      "GOOGLE_APPLICATION_CREDENTIALS must point to an external Admin credential",
-    );
+  const allowedOrigins = (env.AUTH_ALLOWED_ORIGINS ?? (environment !== "development" ? "https://watchparty.top" : "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173")).split(",").map(x => x.trim()).filter(Boolean);
+  if (!allowedOrigins.length || allowedOrigins.some(value => {
+    try { const url = new URL(value); return url.origin !== value || (url.protocol !== "https:" && !(environment === "development" && url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))); } catch { return true; }
+  })) throw new Error("AUTH_ALLOWED_ORIGINS must contain exact HTTPS origins (localhost HTTP is development-only)");
   const port = Number(env.PORT ?? 8080);
   if (!Number.isInteger(port) || port < 0 || port > 65535)
     throw new Error("Invalid PORT");
@@ -45,8 +30,7 @@ export function config(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("TURN_SHARED_SECRET must be at least 32 bytes");
   return {
     environment,
-    projectId,
-    emulatorHost: env.FIREBASE_AUTH_EMULATOR_HOST,
+    allowedOrigins,
     databaseUrl: env.DATABASE_URL,
     host: env.HOST ?? "127.0.0.1",
     port,

@@ -10,5 +10,7 @@
     "erasableSyntaxOnly": true,
     "verbatimModuleSyntax": true
   },
-  "include": [".", "../global.d.ts"]
+  "include": [
+    "."
+  ]
 }
