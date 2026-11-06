@@ -329,6 +329,15 @@ test(
         ).length,
         1,
       );
+      const conflict = double.find(r => r.status === "rejected") as PromiseRejectedResult;
+      const winningIndex = double.findIndex(r => r.status === "fulfilled");
+      const winningCode = winningIndex === 0 ? room.code : another.code;
+      assert.equal(conflict.reason.activePartyCode, winningCode);
+      const blockedCreate = await request(challenger, "/v1/rooms", "POST", {});
+      assert.equal(blockedCreate.status, 409);
+      assert.equal(blockedCreate.body.activePartyCode, winningCode);
+      const returnToParty = await request(challenger, `/v1/rooms/${winningCode}/join`, "POST", {});
+      assert.equal(returnToParty.status, 200);
       const winner = (
         double.find(
           (r) => r.status === "fulfilled",

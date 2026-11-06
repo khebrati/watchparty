@@ -275,7 +275,7 @@ export function createApplication(configuration: Config, deps: Dependencies) {
           : error instanceof ApiError
             ? error
             : new ApiError(500, "INTERNAL_ERROR");
-    res.status(code.status).json({ code: code.code, message: code.message });
+    res.status(code.status).json({ code: code.code, message: code.message, ...(code.code === "ALREADY_IN_ROOM" && code.activePartyCode ? { activePartyCode: code.activePartyCode } : {}) });
   };
   app.use(errors);
   return {

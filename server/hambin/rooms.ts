@@ -228,7 +228,7 @@ export class Rooms {
       await this.closeIfEmpty(c, old);
       return;
     }
-    throw new ApiError(409, "ALREADY_IN_ROOM");
+    throw new ApiError(409, "ALREADY_IN_ROOM", "ALREADY_IN_ROOM", old.code);
   }
   async mutation(
     uid: string,
