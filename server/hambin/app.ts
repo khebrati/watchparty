@@ -24,6 +24,7 @@ export interface Dependencies {
   ): Promise<unknown>;
   identities: Identities;
   databaseReady(): Promise<boolean>;
+  submitBugReport?(uid: string, roomId: string, body: unknown): Promise<unknown>;
   // Phase 3 installs membership/ticket/socket cleanup, and dispatcher health.
   revokeIdentity?(uid: string): Promise<void>;
   dispatcherReady?(): boolean;
@@ -119,7 +120,10 @@ export function createApplication(configuration: Config, deps: Dependencies) {
       voice: deps.voiceAvailable?.() ?? false,
     });
   });
-  app.use(express.json({ limit: "8kb", strict: true }));
+  app.use((req, res, next) => {
+    if (/^\/v1\/rooms\/[^/]+\/bug-reports\/?$/.test(req.path)) return next();
+    return express.json({ limit: "8kb", strict: true })(req, res, next);
+  });
   const authenticate: RequestHandler = async (req, res, next) => {
     if (draining) throw new ApiError(503, "UNAVAILABLE");
     const header = req.get("Authorization");
@@ -159,6 +163,11 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     res.status(204).end();
   });
   api.use(limit("api", 120), authenticate);
+  api.post("/rooms/:roomId/bug-reports", limit("bug-report", 5), express.json({ limit: "16mb", strict: true }), async (req, res) => {
+    if (!deps.submitBugReport) throw new ApiError(503, "UNAVAILABLE");
+    res.setHeader("Cache-Control", "no-store");
+    res.status(201).json(await deps.submitBugReport((req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.body));
+  });
   api.post("/identities/bootstrap", limit("profile", 30), async (req, res) => {
     const { uid } = (req as AuthenticatedRequest).session;
     res.json({

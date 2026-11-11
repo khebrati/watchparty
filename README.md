@@ -47,3 +47,25 @@ storage. Session responses must never be logged or cached.
 For full local-stack, native-device and TURN instructions see `../local/README.md`.
 Hosted operation is documented in `../deploy/README.md`. Historical migration SQL
 and evidence are retained for provenance and are not runtime dependencies.
+
+### Room bug reports
+
+`POST /v1/rooms/:roomId/bug-reports` stores authenticated room-member reports in
+PostgreSQL through migration `0004_bug_reports.sql`. Reports include description,
+available device/browser metadata and the captured application session log. The
+shared schema is in `../../docs/bug-report-contract.md` and OpenAPI. Successful
+responses follow commit; unchanged retries use a stable report UUID.
+
+Operators can inspect `bug_reports` through existing privileged database access:
+
+```sql
+SELECT report_id, created_at, room_id, description, client_info,
+       session_started_at, app_log
+FROM bug_reports
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Reports have no public read API or notification integration. Expired reports are
+removed at service startup, hourly, and before submission (30-day retention).
+Deployment must include the new backend migration and updated clients together.
