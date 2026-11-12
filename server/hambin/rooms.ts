@@ -289,7 +289,7 @@ export class Rooms {
               id,
               code,
               (title as string | undefined)?.trim() ||
-                `${i.name.trim() || "Guest"}\'s party`,
+                (i.language === "fa" ? `دورهمی ${i.name.trim() || "مهمان"}` : `${i.name.trim() || "Guest"}\'s party`),
               i.id,
             ],
           );
