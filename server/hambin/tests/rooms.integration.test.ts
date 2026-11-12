@@ -183,18 +183,19 @@ test(
         ? streamKey
         : secondStreamKey;
       await until(() => guestEvents.some((e) => e.topic === "stream.started"));
-      const report = await ack(guestConn.socket, "playback.report", {
+      await ack(guestConn.socket, "playback.report", {streamSessionId:stream.sessionId,positionMs:30000,playing:false});
+      const report = await ack(first.socket, "playback.report", {
         streamSessionId: stream.sessionId,
         positionMs: 12000,
         playing: false,
       });
       assert.equal(report.accepted, true);
       let leaked = false;
-      guestConn.socket.on("sync.result", () => {
+      first.socket.on("sync.result", () => {
         leaked = true;
       });
-      const syncPromise = event<any>(first.socket, "sync.result");
-      await ack(first.socket, "sync.request", {
+      const syncPromise = event<any>(guestConn.socket, "sync.result");
+      await ack(guestConn.socket, "sync.request", {
         requestId: "catch-up",
         streamSessionId: stream.sessionId,
         positionMs: 3000,
@@ -203,13 +204,13 @@ test(
       assert.equal(sync.status, "APPLIED");
       assert.equal(sync.targetPositionMs, 12000);
       assert.equal(leaked, false);
-      const ahead = await ack(first.socket, "sync.request", {
+      const ahead = await ack(guestConn.socket, "sync.request", {
         requestId: "ahead",
         streamSessionId: stream.sessionId,
         positionMs: 20000,
       });
-      assert.equal(ahead.status, "ALREADY_LEADING");
-      assert.equal(ahead.targetPositionMs, 20000);
+      assert.equal(ahead.status, "APPLIED");
+      assert.equal(ahead.targetPositionMs, 12000);
       if (replayKey) {
         assert.deepEqual(
           (

@@ -2,6 +2,7 @@ import { Server, type Socket } from "socket.io";
 import type { Server as HttpServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AuthProvider, Session } from "./auth.ts";
+import { GroupSync, type SyncContext } from "./groupSync.ts";
 import { ApiError } from "./errors.ts";
 import { SocketCloseDiagnostics } from "./socketDiagnostics.ts";
 import { Rooms, type DurableEvent, type Row } from "./rooms.ts";
@@ -45,6 +46,9 @@ export class Realtime {
   readonly tickets = new Map<string, Ticket>();
   readonly connections = new Map<string, Connection>();
   readonly reports = new Map<string, Report>();
+  readonly groupSync = new GroupSync((roomId, state) => {
+    for (const conn of this.connections.values()) if (conn.roomId === roomId && conn.ready) conn.socket.emit("sync.state", { serverTimeMs: Date.now(), state });
+  });
   private timer: ReturnType<typeof setTimeout> | undefined;
   private closing = false;
   private working: Promise<void> | undefined;
@@ -107,10 +111,11 @@ export class Realtime {
     };
     rooms.onRoomClosed = (id) => {
       this.clearReports(id);
+      this.groupSync.invalidate(id,"ROOM_CLOSED");
       for (const [secret, t] of this.tickets)
         if (t.roomId === id) this.tickets.delete(secret);
     };
-    rooms.onStreamChanged = (id) => this.clearReports(id);
+    rooms.onStreamChanged = (id) => { this.clearReports(id); this.groupSync.invalidate(id); };
     this.schedule(0);
   }
   healthy() {
@@ -170,6 +175,7 @@ export class Realtime {
       if (this.connections.get(key) === conn) {
         this.connections.delete(key);
         this.reports.delete(key);
+        this.groupSync.disconnected(conn.roomId,key);
       }
       void this.rooms
         .detach(conn.uid, conn.roomId, key, "room", conn.generation)
@@ -250,46 +256,35 @@ export class Realtime {
             "room",
             conn.generation,
           );
-          let best = -1;
-          if (
-            state.stream.state === "ACTIVE" &&
-            state.stream.sessionId === body.streamSessionId
-          ) {
-            const snapshot = await this.rooms.snapshot(conn.uid, conn.roomId);
-            const active = new Set(
-              snapshot.members
-                .filter((m) => m.present)
-                .map((m) => m.membershipId),
-            );
-            for (const report of this.reports.values()) {
-              const age = Date.now() - report.received;
-              if (
-                report.roomId !== conn.roomId ||
-                report.sessionId !== body.streamSessionId ||
-                age > 15000 ||
-                !active.has(report.membershipId)
-              )
-                continue;
-              best = Math.max(
-                best,
-                report.position + (report.playing ? age : 0),
-              );
-            }
-          }
-          const result = {
-            requestId: body.requestId,
-            status:
-              best < 0
-                ? "UNAVAILABLE"
-                : best <= body.positionMs
-                  ? "ALREADY_LEADING"
-                  : "APPLIED",
-            targetPositionMs: best < 0 ? 0 : Math.max(best, body.positionMs),
-          };
+          const snapshot = await this.rooms.snapshot(conn.uid,conn.roomId);
+          const owner = snapshot.members.find(m => m.isOwner && m.present);
+          const report = owner ? this.reports.get(owner.membershipId) : undefined;
+          const age = report ? Date.now()-report.received : Infinity;
+          const available = state.stream.state === "ACTIVE" && state.stream.sessionId === body.streamSessionId && report?.sessionId === body.streamSessionId && age <= 15000;
+          const result = { requestId:body.requestId, status:available?"APPLIED":"UNAVAILABLE", targetPositionMs:available?report!.position+(report!.playing?age:0):0, playing:available?report!.playing:false, serverTimeMs:Date.now() };
           socket.emit("sync.result", result);
           return result;
         }),
     );
+    socket.on("sync.clock", (body, ack) => void this.command(conn, body, ack, async () => {await this.authorize(conn); return {serverTimeMs:Date.now()};}));
+    for (const name of ["sync.invite","sync.respond","sync.commit","sync.cancel","sync.ready","sync.failed"]) {
+      socket.on(name, (body, ack) => void this.command(conn,body,ack,async () => {
+        await this.authorize(conn);
+        if(!body || typeof body.requestId!=="string" || !body.requestId || body.requestId.length>128 || typeof body.streamSessionId!=="string")throw new ApiError(400,"INVALID_JSON");
+        const active=await this.rooms.active(conn.uid,conn.roomId,key,"room",conn.generation);
+        const snapshot=await this.rooms.snapshot(conn.uid,conn.roomId);
+        if(!socket.connected || this.connections.get(key)!==conn)throw new ApiError(401,"SESSION_EXPIRED");
+        if(active.stream.state!=="ACTIVE" || active.stream.sessionId!==body.streamSessionId || snapshot.stream.sessionId!==body.streamSessionId || snapshot.stream.revision!==active.stream.revision)throw new ApiError(409,"STALE_STREAM_REVISION");
+        const ctx:SyncContext={roomId:conn.roomId,membershipId:key,isOwner:active.membership.isOwner,streamSessionId:body.streamSessionId,streamRevision:active.stream.revision,members:snapshot.members.filter(m=>m.present && this.connections.get(m.membershipId)?.ready).map(m=>m.membershipId)};
+        let value;
+        if(name==="sync.invite"){this.validatePlayback(body);value=this.groupSync.invite(ctx,body.requestId,body.positionMs);}
+        else if(name==="sync.respond")value=this.groupSync.respond(ctx,body.requestId,body.response);
+        else if(name==="sync.commit")value=this.groupSync.commit(ctx,body.requestId);
+        else if(name==="sync.cancel")value=this.groupSync.cancel(ctx,body.requestId);
+        else value=this.groupSync.ready(ctx,body.requestId,name==="sync.failed"?false:body.ready,name==="sync.failed",typeof body.reason==="string"?body.reason.slice(0,80):"PLAYER_FAILED");
+        return {ok:true,serverTimeMs:Date.now(),state:value};
+      }));
+    }
     socket.on(
       "ack",
       (body, ack) =>
@@ -302,7 +297,7 @@ export class Realtime {
     );
     socket.onAny((name, ...args) => {
       if (
-        !["auth.refresh", "playback.report", "sync.request", "ack"].includes(
+        !["auth.refresh", "playback.report", "sync.request", "sync.clock", "sync.invite", "sync.respond", "sync.commit", "sync.cancel", "sync.ready", "sync.failed", "ack"].includes(
           name,
         )
       ) {
@@ -333,6 +328,7 @@ export class Realtime {
       conn.sequence = attached.snapshot.sequence;
       socket.emit("snapshot", attached.snapshot);
       conn.ready = true;
+      socket.emit("sync.state", {serverTimeMs:Date.now(),state:this.groupSync.state(conn.roomId)});
       for (const event of conn.pending.sort((a, b) => a.sequence - b.sequence))
         this.deliver(conn, event);
       conn.pending = [];
@@ -506,6 +502,7 @@ export class Realtime {
     if (this.closing) return;
     try {
       const now = Date.now();
+      this.groupSync.tick();
       for (const [secret, t] of this.tickets)
         if (t.expires <= now) this.tickets.delete(secret);
       for (const [id, r] of this.reports)
@@ -596,5 +593,6 @@ export class Realtime {
     await new Promise<void>((resolve) => this.io.close(() => resolve()));
     this.tickets.clear();
     this.reports.clear();
+    this.groupSync.clear();
   }
 }
