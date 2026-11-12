@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
-import { identity, type Identity, type Profile } from "./db.ts";
+import { profile as namedProfile, identity, type Identity, type Profile } from "./db.ts";
 import { ApiError } from "./errors.ts";
 
 export const ACCESS_TTL_MS = 15 * 60 * 1000;
@@ -52,6 +52,7 @@ export class LocalAuthProvider implements AuthProvider {
     } finally { client?.release(); }
   }
   async create(profile: Profile): Promise<IssuedSession> {
+    profile = namedProfile(profile);
     return this.transaction(async client => {
       const uid = randomUUID();
       const user = await client.query("INSERT INTO identities(id,name,avatar,language) VALUES($1,$2,$3,$4) RETURNING *", [uid,profile.name,profile.avatar,profile.language]);

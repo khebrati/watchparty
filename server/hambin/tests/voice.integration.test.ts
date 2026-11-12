@@ -6,7 +6,7 @@ import { config } from "../config.ts";
 import { start } from "../main.ts";
 
 const enabled = process.env.HAMBIN_INTEGRATION === "true";
-const profile = { name: "Voice tester", avatar: "moon", language: "en" };
+const profile = { name: "Voice tester", avatar: "comet", language: "en" };
 const waitEvent = <T>(socket: Socket, name: string) => new Promise<T>((resolve, reject) => {
   const timeout = setTimeout(() => reject(new Error(`Timed out waiting for ${name}`)), 5000);
   socket.once(name, (value) => { clearTimeout(timeout); resolve(value as T); });

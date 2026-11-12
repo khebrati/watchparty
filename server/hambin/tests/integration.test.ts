@@ -7,7 +7,7 @@ import { pool, migrate, IdentityStore } from "../db.ts";
 import { start } from "../main.ts";
 import { createApplication } from "../app.ts";
 const enabled = process.env.HAMBIN_INTEGRATION === "true";
-const profile = { name: "Alice", avatar: "moon", language: "en" };
+const profile = { name: "Alice", avatar: "comet", language: "en" };
 test("PostgreSQL guest sessions: atomic creation, concurrent refresh, expiry, revocation, restart and browser cookie protections", { skip: !enabled, timeout: 30000 }, async () => {
   const configuration = config({ ...process.env, NODE_ENV: "development", AUTH_ALLOWED_ORIGINS: "http://localhost:5173" });
   const db = pool(configuration.databaseUrl);
@@ -29,7 +29,7 @@ test("PostgreSQL guest sessions: atomic creation, concurrent refresh, expiry, re
     const running = await start({ ...configuration, port: 0 });
     assert.equal((await fetch(`http://127.0.0.1:${(running.server!.address() as { port: number }).port}/readyz`)).status, 200);
     await running.stop();
-    assert.equal((await post("/v1/guest-sessions", { ...profile, name: " " })).status, 400);
+    assert.equal((await post("/v1/guest-sessions", { ...profile, avatar: "unknown" })).status, 400);
     const created = await post("/v1/guest-sessions", profile);
     assert.equal(created.status, 201);
     assert.equal(created.headers.get("cache-control"), "no-store");

@@ -23,7 +23,7 @@ function event<T = any>(socket: Socket, name: string): Promise<T> {
     });
   });
 }
-const profile = { name: "Migration tester", avatar: "moon", language: "en" };
+const profile = { name: "Migration tester", avatar: "comet", language: "en" };
 test("Crockford code normalization preserves internal separator and ambiguity rules", () => {
   assert.equal(normalizeCode(" ol-il_23-45 "), "01112345");
   assert.throws(() => normalizeCode("ABCD\tEFGH"));

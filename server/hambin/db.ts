@@ -1,3 +1,4 @@
+import { avatarNames } from "./avatarNames.ts";
 import { Pool } from "pg";
 import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -16,12 +17,14 @@ export function profile(body: unknown): Profile {
   const data = body as Record<string, unknown> | null;
   if (
     !data ||
-    ["name", "avatar", "language"].some((key) => typeof data[key] !== "string")
+    ["avatar", "language"].some((key) => typeof data[key] !== "string")
   )
     throw new ApiError(400, "INVALID_PROFILE");
+  const avatar = (data.avatar as string).trim().toLowerCase();
+  if (!Object.hasOwn(avatarNames, avatar)) throw new ApiError(400, "INVALID_PROFILE");
   const value = {
-    name: (data.name as string).trim(),
-    avatar: (data.avatar as string).trim(),
+    name: avatarNames[avatar as keyof typeof avatarNames],
+    avatar,
     language: (data.language as string).trim(),
   };
   if (
@@ -116,6 +119,7 @@ export class IdentityStore implements Identities {
     return identity(result.rows[0]);
   }
   async update(uid: string, value: Profile): Promise<Identity> {
+    value = profile(value);
     const result = await this.db.query(
       "UPDATE identities SET name=$2,avatar=$3,language=$4,updated_at=now() WHERE id=$1 RETURNING *",
       [uid, value.name, value.avatar, value.language],

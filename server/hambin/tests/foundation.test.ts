@@ -25,20 +25,12 @@ test("configuration rejects unsafe origins and malformed TURN settings", () => {
   assert.throws(() => config({ DATABASE_URL: "postgresql://localhost/db", TURN_SHARED_SECRET: "too-short" }));
   assert.throws(() => config({ DATABASE_URL: "postgresql://localhost/db", TURN_URLS: "https://example.invalid" }));
 });
-test("profile preserves Unicode rune and UTF8 byte limits", () => {
-  assert.equal(
-    profile({ name: " 😀 ", avatar: "a", language: "en" }).name,
-    "😀",
-  );
-  assert.doesNotThrow(() =>
-    profile({ name: "😀".repeat(48), avatar: "a", language: "en" }),
-  );
-  assert.throws(() =>
-    profile({ name: "😀".repeat(49), avatar: "a", language: "en" }),
-  );
-  assert.throws(() =>
-    profile({ name: "a", avatar: "😀".repeat(9), language: "en" }),
-  );
+test("profile derives avatar names, ignores custom input, and rejects unknown avatars", () => {
+  assert.deepEqual(profile({name:"Custom name",avatar:"MINT",language:"fa"}), {name:"Frog Wizard",avatar:"mint",language:"fa"});
+  assert.equal(profile({avatar:"berry",language:"en"}).name, "Captain Octopus");
+  assert.equal(profile({name:"",avatar:"comet",language:"en"}).name, "Ice Queen");
+  assert.throws(() => profile({avatar:"unknown",language:"en"}));
+  assert.throws(() => profile({avatar:"comet",language:""}));
 });
 test("auth preserves rejected credentials and hides database failures", () => {
   assert.equal(authError(new ApiError(401, "SESSION_REVOKED")).code, "SESSION_REVOKED");
@@ -51,7 +43,7 @@ test("HTTP mandatory auth, fail-closed outage, readiness, bootstrap and disabled
   const value = {
     id: "internal-uuid",
     name: "A",
-    avatar: "a",
+    avatar: "comet",
     language: "en",
     createdAt: "now",
     updatedAt: "now",
@@ -121,14 +113,14 @@ test("HTTP mandatory auth, fail-closed outage, readiness, bootstrap and disabled
     const first = await (
       await request("/v1/identities/bootstrap", "valid", {
         name: "Alice",
-        avatar: "a",
+        avatar: "comet",
         language: "en",
       })
     ).json();
     const again = await (
       await request("/v1/identities/bootstrap", "valid", {
         name: "Bob",
-        avatar: "b",
+        avatar: "mint",
         language: "fa",
       })
     ).json();
