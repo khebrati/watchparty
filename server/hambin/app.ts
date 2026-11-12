@@ -176,7 +176,8 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     res.setHeader('Cache-Control', 'no-store');
     res.status(201).json(await sendChat(deps.rooms, (req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.body));
   });
-  api.post("/rooms/:roomId/bug-reports", limit("bug-report", 5), express.json({ limit: "16mb", strict: true }), async (req, res) => {
+  // Allow JSON escaping of the 8 MiB log plus base64 for up to 5 MiB of images.
+  api.post("/rooms/:roomId/bug-reports", limit("bug-report", 5), express.json({ limit: "64mb", strict: true }), async (req, res) => {
     if (!deps.submitBugReport) throw new ApiError(503, "UNAVAILABLE");
     res.setHeader("Cache-Control", "no-store");
     res.status(201).json(await deps.submitBugReport((req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.body));

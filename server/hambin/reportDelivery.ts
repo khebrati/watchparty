@@ -1,8 +1,9 @@
 import { logHandledException } from './diagnostics.ts';
+import type { ReportScreenshot } from './bugReports.ts';
 import type { Pool } from 'pg';
 interface ReportRow {
   report_id: string; description: string; client_info: Record<string, string>;
-  app_log: string; sentry_attempts: number;
+  app_log: string; screenshots?: ReportScreenshot[]; sentry_attempts: number;
 }
 export function redactDiagnostic(value: string): string {
   return value.replace(/(?:https?|wss?|content|file|blob):[^\s"'<>]+/gi, '[url]')
@@ -26,6 +27,11 @@ export function feedbackEnvelope(report: ReportRow, dsn: string, environment: st
     Buffer.from(JSON.stringify({ event_id: eventId, dsn }) + '\n' + JSON.stringify({ type: 'feedback', length: Buffer.byteLength(feedback) }) + '\n' + feedback + '\n'),
     Buffer.from(JSON.stringify({ type: 'attachment', length: log.length, filename: 'session.log', content_type: 'text/plain', attachment_type: 'event.attachment' }) + '\n'),
     log, Buffer.from('\n'),
+    ...(report.screenshots ?? []).flatMap((screenshot, index) => {
+      const data = Buffer.from(screenshot.data, 'base64');
+      const extension = screenshot.contentType === 'image/png' ? 'png' : screenshot.contentType === 'image/jpeg' ? 'jpg' : 'webp';
+      return [Buffer.from(JSON.stringify({type: 'attachment', length: data.length, filename: `screenshot-${index + 1}.${extension}`, content_type: screenshot.contentType, attachment_type: 'event.attachment'}) + '\n'), data, Buffer.from('\n')];
+    }),
   ]);
 }
 export class ReportDelivery {
@@ -59,7 +65,7 @@ export class ReportDelivery {
     const project = dsn.pathname.split('/').pop();
     if (!project || dsn.protocol !== 'https:') throw new Error('Invalid Sentry DSN');
     const endpoint = new URL(`/api/${project}/envelope/`, dsn.origin);
-    const rows = await this.db.query<ReportRow>(`SELECT report_id,description,client_info,app_log,sentry_attempts
+    const rows = await this.db.query<ReportRow>(`SELECT report_id,description,client_info,app_log,screenshots,sentry_attempts
       FROM bug_reports WHERE sentry_delivered_at IS NULL AND sentry_next_attempt_at <= now()
       AND created_at > now()-interval '30 days' ORDER BY sentry_next_attempt_at LIMIT 5`);
     for (const row of rows.rows) {

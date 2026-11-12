@@ -56,3 +56,18 @@ test('Sentry quota cooldown pauses the whole queue instead of sending other pend
   await delivery.deliverDue();
   assert.equal(sends,1); assert.equal(reads,1);
 });
+test('manual screenshot attachments use byte-correct envelope framing and generated filenames', () => {
+ const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBz0AAAAASUVORK5CYII=','base64');
+ const body=feedbackEnvelope({...row,screenshots:[{contentType:'image/png',data:bytes.toString('base64')}]},'https://public@example.test/1','test');
+ let offset=body.indexOf(10)+1; const items:{header:Record<string,unknown>;data:Buffer}[]=[];
+ while(offset<body.length){
+  const end=body.indexOf(10,offset); const header=JSON.parse(body.toString('utf8',offset,end)); offset=end+1;
+  const data=body.subarray(offset,offset+header.length); items.push({header,data}); offset+=header.length;
+  assert.equal(body[offset++],10);
+ }
+ assert.equal(items.length,3);
+ assert.equal(items[2].header.filename,'screenshot-1.png');
+ assert.equal(items[2].header.content_type,'image/png');
+ assert.deepEqual(items[2].data,bytes);
+ assert.equal(items[2].header.length,bytes.length);
+});
