@@ -11,6 +11,7 @@ import { profile } from "./db.ts";
 import { REFRESH_TTL_MS, type IssuedSession } from "./auth.ts";
 import { ApiError } from "./errors.ts";
 import type { Rooms } from "./rooms.ts";
+import { readChat, sendChat } from './chat.ts';
 export interface AuthenticatedRequest extends Request {
   session: Session;
 }
@@ -163,6 +164,16 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     res.status(204).end();
   });
   api.use(limit("api", 120), authenticate);
+  api.get('/rooms/:roomId/chat/messages', async (req: Request, res) => {
+    if (!deps.rooms) throw new ApiError(503, 'UNAVAILABLE');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(await readChat(deps.rooms, (req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.query.before));
+  });
+  api.post('/rooms/:roomId/chat/messages', async (req: Request, res) => {
+    if (!deps.rooms) throw new ApiError(503, 'UNAVAILABLE');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(201).json(await sendChat(deps.rooms, (req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.body));
+  });
   api.post("/rooms/:roomId/bug-reports", limit("bug-report", 5), express.json({ limit: "16mb", strict: true }), async (req, res) => {
     if (!deps.submitBugReport) throw new ApiError(503, "UNAVAILABLE");
     res.setHeader("Cache-Control", "no-store");

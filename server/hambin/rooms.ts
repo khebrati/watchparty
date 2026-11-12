@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { ApiError } from "./errors.ts";
+import { chatPage } from './chat.ts';
 
 export type Row = Record<string, any>;
 export type Role = "room" | "voice";
@@ -409,6 +410,7 @@ export class Rooms {
       members: all.filter((m) => !m.left_at).map(summary),
       stream: streamDto(s.rows[0], r.id),
       sequence: Number(seq.rows[0].event_sequence),
+      chat: await chatPage(c, r.id),
     };
   }
   async leave(uid: string, id: string) {

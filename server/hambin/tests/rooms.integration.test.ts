@@ -597,7 +597,7 @@ test(
     try {
       await until(() => running.realtime!.healthy());
       const holder = await running.db.query(
-        "SELECT pid FROM pg_locks WHERE locktype='advisory' AND objid=734782094 AND granted",
+        "SELECT pid FROM pg_locks WHERE locktype='advisory' AND objid=734782094 AND granted AND database=(SELECT oid FROM pg_database WHERE datname=current_database())",
       );
       assert.equal(holder.rowCount, 1);
       await running.db.query("SELECT pg_terminate_backend($1)", [
