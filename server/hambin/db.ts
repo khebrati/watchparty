@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { avatarNames, persianAvatarNames } from "./avatarNames.ts";
 import { Pool } from "pg";
 import { readFile, readdir } from "node:fs/promises";
@@ -80,6 +81,7 @@ export async function migrate(db: Pool): Promise<void> {
     }
     await client.query("COMMIT");
   } catch (error) {
+    logHandledException("db.migrate.1", error);
     await client.query("ROLLBACK");
     throw error;
   } finally {

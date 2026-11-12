@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { Server, type Socket } from "socket.io";
 import type { Server as HttpServer } from "node:http";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -100,6 +101,7 @@ export class Realtime {
         socket.data.ticket = { ...ticket, session };
         next();
       } catch (e) {
+        logHandledException("realtime.handler.1", e);
         const error = new Error(failure(e).code) as Error & { data?: unknown };
         error.data = failure(e);
         next(error);
@@ -179,7 +181,8 @@ export class Realtime {
       }
       void this.rooms
         .detach(conn.uid, conn.roomId, key, "room", conn.generation)
-        .catch(() => {});
+        .catch((handledError) => {
+          logHandledException("realtime.connect.2", handledError); });
     });
     socket.on(
       "auth.refresh",
@@ -333,6 +336,7 @@ export class Realtime {
         this.deliver(conn, event);
       conn.pending = [];
     } catch (e) {
+      logHandledException("realtime.connect.3", e);
       socket.emit("error", failure(e));
       socket.disconnect();
     }
@@ -374,6 +378,7 @@ export class Realtime {
       const result = await operation();
       if (typeof ack === "function") ack(result);
     } catch (e) {
+      logHandledException("realtime.command.4", e);
       const result = failure(e);
       conn.socket.emit("error", result);
       if (typeof ack === "function") ack(result);
@@ -420,6 +425,7 @@ export class Realtime {
       conn.verifiedUntil = Date.now() + 60000;
       conn.protected = true;
     } catch (e) {
+      logHandledException("realtime.verifyConnection.5", e);
       if (epoch === conn.authEpoch) {
         conn.protected = false;
         if (
@@ -553,7 +559,8 @@ export class Realtime {
       }
       this.failures = 0;
       this.lastSuccessful = Date.now();
-    } catch {
+    } catch (handledError) {
+      logHandledException("realtime.tick.6", handledError);
       this.failures++;
       console.error(
         JSON.stringify({ event: "dispatcher_retry", attempt: this.failures }),
@@ -572,6 +579,7 @@ export class Realtime {
           try {
             await this.revalidate(conn);
           } catch (e) {
+            logHandledException("realtime.authMaintenance.7", e);
             conn.verifiedUntil = Date.now() + 5000;
             conn.socket.emit("error", failure(e));
           }

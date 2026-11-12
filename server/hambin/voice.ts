@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { Server, Socket } from "socket.io";
 import type { AuthProvider, Session } from "./auth.ts";
@@ -63,7 +64,8 @@ export class MeshVoice {
 
   private async serialized<T>(key: string, action: () => Promise<T>): Promise<T> {
     const prior = this.locks.get(key) ?? Promise.resolve();
-    const next = prior.catch(() => {}).then(action);
+    const next = prior.catch((handledError) => {
+      logHandledException("voice.serialized.next.1", handledError); }).then(action);
     this.locks.set(key, next);
     try { return await next; } finally { if (this.locks.get(key) === next) this.locks.delete(key); }
   }
@@ -124,7 +126,8 @@ export class MeshVoice {
       const namespace = io.of(/^\/hambin\/voice\/[0-9a-f-]{36}$/i);
       namespace.use((socket, next) => void this.admit(socket, next));
       namespace.on("connection", (socket) => void this.connect(socket));
-      this.timer = setInterval(() => void this.maintain().catch(() => {
+      this.timer = setInterval(() => void this.maintain().catch((handledError) => {
+        logHandledException("voice.handler.2", handledError);
         console.error(JSON.stringify({ event: "voice_maintenance_failed" }));
       }), 10000);
       this.timer.unref();
@@ -215,6 +218,7 @@ export class MeshVoice {
       socket.data.voiceTicket = { ...ticket, session } satisfies Ticket;
       next();
     } catch (error) {
+      logHandledException("voice.admit.3", error);
       const data = jsonError(error);
       const rejected = new Error(data.code) as Error & { data?: unknown };
       rejected.data = data;
@@ -274,7 +278,9 @@ export class MeshVoice {
         socket.broadcast.emit("voice.roster", this.roster(ticket.roomId));
         socket.emit("voice.roster", this.roster(ticket.roomId));
       } catch (error) {
-        await this.rooms.detach(ticket.uid, ticket.roomId, key, "voice", ticket.lease).catch(() => {});
+        logHandledException("voice.connect.4", error);
+        await this.rooms.detach(ticket.uid, ticket.roomId, key, "voice", ticket.lease).catch((handledError) => {
+          logHandledException("voice.connect.5", handledError); });
         socket.emit("error", jsonError(error));
         socket.disconnect(true);
       }
@@ -300,6 +306,7 @@ export class MeshVoice {
         this.detach(connection.uid, connection.roomId, connection.membershipId, connection.lease);
         ack?.({ ok: true });
       } catch (error) {
+        logHandledException("voice.leave.6", error);
         this.metrics.acknowledgementsRejected++;
         ack?.(jsonError(error));
       }
@@ -316,6 +323,7 @@ export class MeshVoice {
       this.broadcastRoster(connection.roomId);
       ack?.({ ok: true });
     } catch (error) {
+      logHandledException("voice.mute.7", error);
       this.metrics.acknowledgementsRejected++;
       ack?.(jsonError(error));
     }
@@ -337,7 +345,7 @@ export class MeshVoice {
         if (connection.tokens < 1) throw new ApiError(429, "RATE_LIMITED");
         connection.tokens -= 1;
         let message: any;
-        try { message = JSON.parse((body as any).msg); } catch { throw new ApiError(400, "INVALID_JSON"); }
+        try { message = JSON.parse((body as any).msg); } catch (handledError) { logHandledException("voice.signal.8", handledError);  throw new ApiError(400, "INVALID_JSON"); }
         if (!message || message.generation !== connection.generation || typeof message.targetGeneration !== "string")
           throw new ApiError(401, "SESSION_EXPIRED");
         const peerGeneration = message.peerGeneration;
@@ -435,6 +443,7 @@ export class MeshVoice {
         target.socket.emit("signal", { from: connection.membershipId, msg: (body as any).msg });
         ack?.({ ok: true });
       } catch (error) {
+        logHandledException("voice.signal.9", error);
         this.metrics.acknowledgementsRejected++;
         this.metrics.negotiationFailures++;
         ack?.(jsonError(error));
@@ -469,7 +478,8 @@ export class MeshVoice {
   }
 
   private detach(uid: string, roomId: string, membershipId: string, generation: string) {
-    const task = this.rooms.detach(uid, roomId, membershipId, "voice", generation).catch(() => {});
+    const task = this.rooms.detach(uid, roomId, membershipId, "voice", generation).catch((handledError) => {
+      logHandledException("voice.detach.task.10", handledError); });
     this.pendingDetaches.add(task);
     void task.finally(() => this.pendingDetaches.delete(task));
   }
@@ -489,6 +499,7 @@ export class MeshVoice {
       this.assertAuthority(connection);
       ack?.({ expiresAt: new Date(session.expiresAt).toISOString() });
     } catch (error) {
+      logHandledException("voice.refresh.11", error);
       this.metrics.acknowledgementsRejected++;
       ack?.(jsonError(error));
     }
@@ -511,6 +522,7 @@ export class MeshVoice {
         try {
           await this.verifyFresh(connection);
         } catch (error) {
+          logHandledException("voice.maintain.12", error);
           // Provider outages suspend protected signaling but do not tear down
           // already-negotiated media. Invalid/revoked credentials do disconnect.
           if (!(error instanceof ApiError && error.status === 503))

@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { createServer, type Server } from "node:http";
 import { config, type Config } from "./config.ts";
 import { createAuth, type LocalAuthProvider } from "./auth.ts";
@@ -11,9 +12,10 @@ import { ReportDelivery } from "./reportDelivery.ts";
 import { flushMonitoring } from "./observability.ts";
 export async function start(configuration: Config = config()) {
   const db = pool(configuration.databaseUrl);
-  db.on("error", () =>
-    console.error(JSON.stringify({ event: "database_pool_error" })),
-  );
+  db.on("error", error => {
+    logHandledException('database.pool', error);
+    console.error(JSON.stringify({ event: "database_pool_error" }));
+  });
   let auth: LocalAuthProvider | undefined;
   let application: ReturnType<typeof createApplication> | undefined;
   let server: Server | undefined;
@@ -24,7 +26,8 @@ export async function start(configuration: Config = config()) {
   let ownershipLost = false;
   let reportDelivery: ReportDelivery | undefined;
   let reportCleanup: ReturnType<typeof setInterval> | undefined;
-  const onLockLost = () => {
+  const onLockLost = (error?: Error) => {
+    if (error) logHandledException('database.ownership', error);
     if (ownershipLost) return;
     ownershipLost = true;
     application?.drain();
@@ -40,12 +43,14 @@ export async function start(configuration: Config = config()) {
     rooms?.drain();
     try {
       await voice?.close();
-    } catch {
+    } catch (handledError) {
+      logHandledException("main.start.cleanup.1", handledError);
       console.error(JSON.stringify({ event: "voice_cleanup_failed" }));
     }
     try {
       await realtime?.close();
-    } catch {
+    } catch (handledError) {
+      logHandledException("main.start.cleanup.2", handledError);
       console.error(JSON.stringify({ event: "realtime_cleanup_failed" }));
     }
     if (server?.listening) {
@@ -57,7 +62,8 @@ export async function start(configuration: Config = config()) {
     application?.close();
     try {
       await auth?.close();
-    } catch {
+    } catch (handledError) {
+      logHandledException("main.start.cleanup.3", handledError);
       console.error(JSON.stringify({ event: "auth_cleanup_failed" }));
     } finally {
       if (instanceLock) {
@@ -66,7 +72,8 @@ export async function start(configuration: Config = config()) {
         try {
           if (!ownershipLost)
             await lock.query("SELECT pg_advisory_unlock(734782094)");
-        } catch {
+        } catch (handledError) {
+          logHandledException("main.start.cleanup.4", handledError);
           ownershipLost = true;
         } finally {
           lock.off("error", onLockLost);
@@ -100,7 +107,8 @@ export async function start(configuration: Config = config()) {
     await reports.purge();
     reportDelivery = new ReportDelivery(db);
     reportDelivery.start();
-    reportCleanup = setInterval(() => { void reports.purge().catch(() => console.error(JSON.stringify({ event: "report_cleanup_failed" }))); }, 3600000);
+    reportCleanup = setInterval(() => { void reports.purge().catch((handledError) => {
+      logHandledException("main.start.5", handledError); return console.error(JSON.stringify({ event: "report_cleanup_failed" })); }); }, 3600000);
     reportCleanup.unref();
     application = createApplication(configuration, {
       submitBugReport: async (uid, roomId, body) => { await reports.purge(); return reports.submit(uid, roomId, body); },
@@ -141,6 +149,7 @@ export async function start(configuration: Config = config()) {
       server!.listen(configuration.port, configuration.host);
     });
   } catch (error) {
+    logHandledException("main.start.6", error);
     await cleanup();
     throw error;
   }

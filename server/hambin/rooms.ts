@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { ApiError } from "./errors.ts";
@@ -128,6 +129,7 @@ export class Rooms {
       await c.query("COMMIT");
       return value;
     } catch (e) {
+      logHandledException("rooms.transaction.1", e);
       await c.query("ROLLBACK");
       throw e;
     } finally {
@@ -441,7 +443,8 @@ export class Rooms {
       try {
         const url = new URL(body.url.trim());
         if (url.protocol !== "https:" || !url.hostname) throw 0;
-      } catch {
+      } catch (handledError) {
+        logHandledException("rooms.stream.2", handledError);
         throw new ApiError(400, "INVALID_STREAM_URL");
       }
     }
@@ -650,6 +653,7 @@ export class Rooms {
       );
       await c.query("COMMIT");
     } catch (e) {
+      logHandledException("rooms.recover.3", e);
       await c.query("ROLLBACK");
       throw e;
     } finally {

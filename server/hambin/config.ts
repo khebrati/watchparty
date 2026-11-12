@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 export interface Config {
   environment: string;
   host: string;
@@ -13,7 +14,7 @@ export function config(env: NodeJS.ProcessEnv = process.env): Config {
   if (!env.DATABASE_URL) throw new Error("DATABASE_URL is required");
   const allowedOrigins = (env.AUTH_ALLOWED_ORIGINS ?? (environment !== "development" ? "https://watchparty.top" : "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173")).split(",").map(x => x.trim()).filter(Boolean);
   if (!allowedOrigins.length || allowedOrigins.some(value => {
-    try { const url = new URL(value); return url.origin !== value || (url.protocol !== "https:" && !(environment === "development" && url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))); } catch { return true; }
+    try { const url = new URL(value); return url.origin !== value || (url.protocol !== "https:" && !(environment === "development" && url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname))); } catch (handledError) { logHandledException("config.config.1", handledError);  return true; }
   })) throw new Error("AUTH_ALLOWED_ORIGINS must contain exact HTTPS origins (localhost HTTP is development-only)");
   const port = Number(env.PORT ?? 8080);
   if (!Number.isInteger(port) || port < 0 || port > 65535)

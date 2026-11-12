@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { profile as namedProfile, identity, type Identity, type Profile } from "./db.ts";
@@ -47,7 +48,8 @@ export class LocalAuthProvider implements AuthProvider {
       await client.query("COMMIT");
       return result;
     } catch (error) {
-      try { await client?.query("ROLLBACK"); } catch {}
+      logHandledException("auth.transaction.1", error);
+      try { await client?.query("ROLLBACK"); } catch (handledError) { logHandledException("auth.transaction.2", handledError); }
       throw authError(error);
     } finally { client?.release(); }
   }
@@ -94,7 +96,7 @@ export class LocalAuthProvider implements AuthProvider {
       if (value.revoked_at) throw new ApiError(401, "SESSION_REVOKED");
       if (value.expires_at.getTime() <= Date.now() || value.refresh_expires_at.getTime() <= Date.now()) throw new ApiError(401, "SESSION_EXPIRED");
       return { uid: value.identity_id, expiresAt: value.expires_at.getTime(), authTime: value.created_at.getTime(), token };
-    } catch (error) { throw authError(error); }
+    } catch (error) { logHandledException("auth.verify.3", error);  throw authError(error); }
   }
   async revoke(uid: string): Promise<void> {
     await this.transaction(async client => {
@@ -103,7 +105,7 @@ export class LocalAuthProvider implements AuthProvider {
   }
   async reset(token: string): Promise<string | undefined> {
     let hash: string;
-    try { hash = tokenHash(token); } catch { return undefined; }
+    try { hash = tokenHash(token); } catch (handledError) { logHandledException("auth.reset.4", handledError);  return undefined; }
     return this.transaction(async client => {
       const result = await client.query("SELECT identity_id FROM guest_sessions WHERE refresh_hash=$1", [hash]);
       const uid = result.rows[0]?.identity_id;

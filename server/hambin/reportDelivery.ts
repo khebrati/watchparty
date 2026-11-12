@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import type { Pool } from 'pg';
 interface ReportRow {
   report_id: string; description: string; client_info: Record<string, string>;
@@ -45,7 +46,8 @@ export class ReportDelivery {
   }
   private tick() {
     if (!this.stopped && !this.flight) {
-      this.flight = this.deliverDue().catch(() => {
+      this.flight = this.deliverDue().catch((handledError) => {
+        logHandledException("reportDelivery.tick.1", handledError);
         console.error(JSON.stringify({event:'report_delivery_failed'}));
       }).finally(() => { this.flight = undefined; });
     }
@@ -79,7 +81,8 @@ export class ReportDelivery {
         await response.arrayBuffer();
         if (!response.ok) throw new Error('Sentry rejected report');
         await this.db.query('UPDATE bug_reports SET sentry_delivered_at=now(),sentry_attempts=sentry_attempts+1 WHERE report_id=$1', [row.report_id]);
-      } catch {
+      } catch (handledError) {
+        logHandledException("reportDelivery.deliverDue.2", handledError);
         const delay = Math.max(Math.min(86400, retryAfter || 0), Math.min(3600, 15 * 2 ** Math.min(row.sentry_attempts, 8)));
         await this.db.query("UPDATE bug_reports SET sentry_attempts=sentry_attempts+1,sentry_next_attempt_at=now()+$2*interval '1 second' WHERE report_id=$1", [row.report_id, delay]);
         if (retryAfter > 0) { this.pausedUntil = Date.now() + delay * 1000; break; }

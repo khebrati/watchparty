@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { ApiError } from "./errors.ts";
@@ -36,6 +37,7 @@ export class BugReports {
    }
    await c.query("COMMIT"); return {reportId:r.reportId};
   } catch (error) {
+    logHandledException("bugReports.submit.1", error);
    await c.query("ROLLBACK");
    if ((error as {code?:string}).code === "23505") throw new ApiError(409,"REPORT_CONFLICT");
    throw error;

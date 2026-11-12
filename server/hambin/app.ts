@@ -1,3 +1,4 @@
+import { logHandledException } from './diagnostics.ts';
 import express, {
   type ErrorRequestHandler,
   type Request,
@@ -112,7 +113,7 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     let database = false;
     try {
       database = await deps.databaseReady();
-    } catch {}
+    } catch (handledError) { logHandledException("app.createApplication.1", handledError); }
     const dispatcher = deps.dispatcherReady?.() ?? true;
     const ready = !draining && database && dispatcher;
     res.status(ready ? 200 : 503).json({
@@ -285,6 +286,7 @@ export function createApplication(configuration: Config, deps: Dependencies) {
   app.use("/v1", api);
   app.use((req, res, next) => next(new ApiError(404, "NOT_FOUND")));
   const errors: ErrorRequestHandler = (error, req, res, next) => {
+    logHandledException('http.error', error);
     if (res.headersSent) return next(error);
     if (!(error instanceof ApiError) && !error?.type)
       console.error(JSON.stringify({ event: "internal_error" }));
