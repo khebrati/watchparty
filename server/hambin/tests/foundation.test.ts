@@ -26,7 +26,7 @@ test("configuration rejects unsafe origins and malformed TURN settings", () => {
   assert.throws(() => config({ DATABASE_URL: "postgresql://localhost/db", TURN_URLS: "https://example.invalid" }));
 });
 test("profile derives avatar names, ignores custom input, and rejects unknown avatars", () => {
-  assert.deepEqual(profile({name:"Custom name",avatar:"MINT",language:"fa"}), {name:"Frog Wizard",avatar:"mint",language:"fa"});
+  assert.deepEqual(profile({name:"Custom name",avatar:"MINT",language:"fa"}), {name:"قورباغهٔ جادوگر",avatar:"mint",language:"fa"});
   assert.equal(profile({avatar:"berry",language:"en"}).name, "Captain Octopus");
   assert.equal(profile({name:"",avatar:"comet",language:"en"}).name, "Ice Queen");
   assert.throws(() => profile({avatar:"unknown",language:"en"}));

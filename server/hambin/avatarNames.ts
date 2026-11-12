@@ -13,3 +13,18 @@ export const avatarNames = {
   spark: "Frankie",
   bloom: "Mummy Barista",
 } as const;
+
+export const persianAvatarNames: Record<keyof typeof avatarNames, string> = {
+  comet: "ملکهٔ یخی",
+  mint: "قورباغهٔ جادوگر",
+  sunny: "کارآگاه اسکلتی",
+  berry: "کاپیتان اختاپوس",
+  cloud: "تلویزیون گیمر",
+  ember: "دانشمند فضایی",
+  nova: "ربات شاعر",
+  orbit: "گرگ قهوه‌دوست",
+  prism: "پروفسور روباه",
+  echo: "اژدهای کتاب‌خوان",
+  spark: "فرانکی",
+  bloom: "مومیایی باریستا",
+};

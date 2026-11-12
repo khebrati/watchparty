@@ -1,4 +1,4 @@
-import { avatarNames } from "./avatarNames.ts";
+import { avatarNames, persianAvatarNames } from "./avatarNames.ts";
 import { Pool } from "pg";
 import { readFile, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -23,7 +23,7 @@ export function profile(body: unknown): Profile {
   const avatar = (data.avatar as string).trim().toLowerCase();
   if (!Object.hasOwn(avatarNames, avatar)) throw new ApiError(400, "INVALID_PROFILE");
   const value = {
-    name: avatarNames[avatar as keyof typeof avatarNames],
+    name: ((data.language as string).trim() === "fa" ? persianAvatarNames : avatarNames)[avatar as keyof typeof avatarNames],
     avatar,
     language: (data.language as string).trim(),
   };
