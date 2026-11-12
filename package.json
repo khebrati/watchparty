@@ -13,6 +13,7 @@
     "test:integration": "HAMBIN_INTEGRATION=true node --test --test-concurrency=1 server/hambin/tests/*.integration.test.ts server/hambin/tests/integration.test.ts"
   },
   "dependencies": {
+    "@sentry/node": "^11.12.0",
     "express": "^5.2.1",
     "pg": "^8.16.3",
     "socket.io": "^4.8.1"
@@ -21,8 +22,8 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.0.1",
     "@types/pg": "^8.16.0",
-    "typescript": "^5.9.3",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": "24.18.x",

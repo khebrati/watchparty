@@ -7,6 +7,8 @@ import { Rooms } from "./rooms.ts";
 import { Realtime } from "./realtime.ts";
 import { MeshVoice } from "./voice.ts";
 import { BugReports } from "./bugReports.ts";
+import { ReportDelivery } from "./reportDelivery.ts";
+import { flushMonitoring } from "./observability.ts";
 export async function start(configuration: Config = config()) {
   const db = pool(configuration.databaseUrl);
   db.on("error", () =>
@@ -20,6 +22,7 @@ export async function start(configuration: Config = config()) {
   let rooms: Rooms | undefined;
   let instanceLock: import("pg").PoolClient | undefined;
   let ownershipLost = false;
+  let reportDelivery: ReportDelivery | undefined;
   let reportCleanup: ReturnType<typeof setInterval> | undefined;
   const onLockLost = () => {
     if (ownershipLost) return;
@@ -32,6 +35,7 @@ export async function start(configuration: Config = config()) {
   };
   const cleanup = async () => {
     clearInterval(reportCleanup);
+    await reportDelivery?.stop();
     application?.drain();
     rooms?.drain();
     try {
@@ -71,6 +75,7 @@ export async function start(configuration: Config = config()) {
         }
       }
       await db.end();
+      await flushMonitoring();
     }
   };
   try {
@@ -93,6 +98,8 @@ export async function start(configuration: Config = config()) {
       throw new Error("Database runtime ownership lost during startup");
     const reports = new BugReports(db);
     await reports.purge();
+    reportDelivery = new ReportDelivery(db);
+    reportDelivery.start();
     reportCleanup = setInterval(() => { void reports.purge().catch(() => console.error(JSON.stringify({ event: "report_cleanup_failed" }))); }, 3600000);
     reportCleanup.unref();
     application = createApplication(configuration, {

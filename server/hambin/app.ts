@@ -10,6 +10,7 @@ import type { Identities } from "./db.ts";
 import { profile } from "./db.ts";
 import { REFRESH_TTL_MS, type IssuedSession } from "./auth.ts";
 import { ApiError } from "./errors.ts";
+import { captureServerError } from "./observability.ts";
 import type { Rooms } from "./rooms.ts";
 import { readChat, sendChat } from './chat.ts';
 export interface AuthenticatedRequest extends Request {
@@ -295,6 +296,7 @@ export function createApplication(configuration: Config, deps: Dependencies) {
           : error instanceof ApiError
             ? error
             : new ApiError(500, "INTERNAL_ERROR");
+    if (code.status >= 500) captureServerError(error);
     res.status(code.status).json({ code: code.code, message: code.message, ...(code.code === "ALREADY_IN_ROOM" && code.activePartyCode ? { activePartyCode: code.activePartyCode } : {}) });
   };
   app.use(errors);
