@@ -284,7 +284,7 @@ export class Realtime {
         const snapshot=await this.rooms.snapshot(conn.uid,conn.roomId);
         if(!socket.connected || this.connections.get(key)!==conn)throw new ApiError(401,"SESSION_EXPIRED");
         if(active.stream.state!=="ACTIVE" || active.stream.sessionId!==body.streamSessionId || snapshot.stream.sessionId!==body.streamSessionId || snapshot.stream.revision!==active.stream.revision)throw new ApiError(409,"STALE_STREAM_REVISION");
-        const ctx:SyncContext={roomId:conn.roomId,membershipId:key,isOwner:active.membership.isOwner,streamSessionId:body.streamSessionId,streamRevision:active.stream.revision,members:snapshot.members.filter(m=>m.present && this.connections.get(m.membershipId)?.ready).map(m=>m.membershipId)};
+        const ctx:SyncContext={roomId:conn.roomId,membershipId:key,isOwner:active.membership.isOwner,streamSessionId:body.streamSessionId,streamRevision:active.stream.revision,localFile:snapshot.stream.sourceKind==="LOCAL_FILE",members:snapshot.members.filter(m=>m.present && this.connections.get(m.membershipId)?.ready).map(m=>m.membershipId)};
         let value;
         if(name==="sync.invite"){this.validatePlayback(body);value=this.groupSync.invite(ctx,body.requestId,body.positionMs);}
         else if(name==="sync.respond")value=this.groupSync.respond(ctx,body.requestId,body.response);
@@ -500,7 +500,7 @@ export class Realtime {
       if (!owner) return;
       this.startedSources.set(event.roomId, snapshot.stream.sessionId);
       this.groupSync.startStream({ roomId:event.roomId, membershipId:owner.membershipId, isOwner:true,
-        streamSessionId:snapshot.stream.sessionId, streamRevision:snapshot.stream.revision,
+        streamSessionId:snapshot.stream.sessionId, streamRevision:snapshot.stream.revision, localFile:snapshot.stream.sourceKind==="LOCAL_FILE",
         members:members.map(m => m.membershipId) });
     }
   }

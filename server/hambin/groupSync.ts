@@ -4,9 +4,9 @@ export interface SyncParticipant { membershipId: string; response: 'PENDING' | '
 export interface SyncAttempt {
   requestId: string; streamSessionId: string; streamRevision: number; ownerMembershipId: string;
   targetPositionMs: number; createdAtMs: number; revision: number; phase: SyncPhase;
-  participants: SyncParticipant[]; deadlineMs?: number; startAtMs?: number; reason?: string;
+  localFile?: boolean; participants: SyncParticipant[]; deadlineMs?: number; startAtMs?: number; reason?: string;
 }
-export interface SyncContext { roomId: string; membershipId: string; isOwner: boolean; streamSessionId: string; streamRevision: number; members: string[] }
+export interface SyncContext { roomId: string; membershipId: string; isOwner: boolean; streamSessionId: string; streamRevision: number; localFile?: boolean; members: string[] }
 const terminal = (phase: SyncPhase) => ['COMPLETED','CANCELLED','FAILED'].includes(phase);
 /** Synchronous mutations provide the authoritative acceptance/commit ordering. */
 export class GroupSync {
@@ -23,8 +23,8 @@ export class GroupSync {
     const s: SyncAttempt = {
       requestId, streamSessionId: ctx.streamSessionId, streamRevision: ctx.streamRevision,
       ownerMembershipId: ctx.membershipId, targetPositionMs: 0, createdAtMs: this.now(),
-      revision: 0, phase: 'PREPARING', deadlineMs: this.now() + 15000,
-      participants: [...new Set([ctx.membershipId, ...ctx.members])].map(membershipId => ({ membershipId, response: 'ACCEPTED', ready: false })),
+      revision: 0, localFile: ctx.localFile, phase: ctx.localFile ? 'INVITING' : 'PREPARING', deadlineMs: this.now() + (ctx.localFile ? 120000 : 15000),
+      participants: [...new Set([ctx.membershipId, ...ctx.members])].map(membershipId => ({ membershipId, response: ctx.localFile && membershipId !== ctx.membershipId ? 'PENDING' : 'ACCEPTED', ready: false })),
     };
     this.attempts.set(ctx.roomId, s);
     return this.changed(ctx.roomId, s);
@@ -43,7 +43,7 @@ export class GroupSync {
     const old = this.state(ctx.roomId);
     if (old?.requestId === requestId && old.streamSessionId === ctx.streamSessionId) return structuredClone(old);
     if (old && !terminal(old.phase)) throw new ApiError(409,'SYNC_IN_PROGRESS');
-    const s: SyncAttempt = { requestId, streamSessionId: ctx.streamSessionId, streamRevision: ctx.streamRevision, ownerMembershipId: ctx.membershipId, targetPositionMs: positionMs, createdAtMs: this.now(), revision: 0, phase:'INVITING', deadlineMs:this.now()+120000, participants:[...new Set([ctx.membershipId,...ctx.members])].map(membershipId=>({membershipId,response:membershipId===ctx.membershipId?'ACCEPTED':'PENDING',ready:false})) };
+    const s: SyncAttempt = { requestId, streamSessionId: ctx.streamSessionId, streamRevision: ctx.streamRevision, ownerMembershipId: ctx.membershipId, targetPositionMs: positionMs, createdAtMs: this.now(), revision: 0, localFile:ctx.localFile, phase:'INVITING', deadlineMs:this.now()+120000, participants:[...new Set([ctx.membershipId,...ctx.members])].map(membershipId=>({membershipId,response:membershipId===ctx.membershipId?'ACCEPTED':'PENDING',ready:false})) };
     this.attempts.set(ctx.roomId,s); return this.changed(ctx.roomId,s);
   }
   respond(ctx: SyncContext, requestId: string, response: unknown) {
@@ -61,6 +61,7 @@ export class GroupSync {
     if (s.phase==='PREPARING'||s.phase==='SCHEDULED') return structuredClone(s);
     if (s.phase!=='INVITING') throw new ApiError(409,'STALE_SYNC');
     for (const p of s.participants) if (p.response==='ACCEPTED' && !ctx.members.includes(p.membershipId) && p.membershipId!==ctx.membershipId) {p.response='EXCLUDED';p.reason='DISCONNECTED';}
+    if(s.localFile && !s.participants.some(p=>p.membershipId!==s.ownerMembershipId&&p.response==='ACCEPTED'))throw new ApiError(409,'NO_READY_VIEWERS');
     s.phase='PREPARING';s.deadlineMs=this.now()+15000;
     return this.changed(ctx.roomId,s);
   }
@@ -83,7 +84,7 @@ export class GroupSync {
   }
   private exclude(s: SyncAttempt,p: SyncParticipant,reason:string) {
     p.ready=false;p.reason=reason;p.response='EXCLUDED';
-    if(p.membershipId===s.ownerMembershipId){s.phase='FAILED';s.reason=reason;s.deadlineMs=this.now()+30000;}
+    if(s.localFile || p.membershipId===s.ownerMembershipId){s.phase='FAILED';s.reason=reason;s.deadlineMs=this.now()+30000;}
   }
   private schedule(s: SyncAttempt) {
     if(s.phase!=='PREPARING')return;

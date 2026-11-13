@@ -19,3 +19,15 @@ test('new stream automatically commits everyone at zero, including owner-only ro
  now=6000;sync.tick();assert.equal(sync.state('room')?.phase,'COMPLETED');
  const solo={...ctx,streamSessionId:'solo',streamRevision:4,members:[]};const single=sync.startStream(solo);assert.equal(single.participants.length,1);sync.ready(solo,single.requestId,true);assert.equal(sync.state('room')?.phase,'SCHEDULED');
 });
+
+test('local source waits for file consent and fails the whole attempt on one bad copy',()=>{
+ const sync=new GroupSync(()=>{});const local={...fixture().owner,localFile:true};
+ const invite=sync.startStream(local);assert.equal(invite.phase,'INVITING');assert.equal(invite.localFile,true);
+ assert.deepEqual(invite.participants.map(p=>p.response),['ACCEPTED','PENDING','PENDING']);
+ sync.respond({...local,membershipId:'a',isOwner:false},invite.requestId,'ACCEPTED');
+ sync.respond({...local,membershipId:'b',isOwner:false},invite.requestId,'DECLINED');
+ const committed=sync.commit(local,invite.requestId);assert.equal(committed.phase,'PREPARING');
+ sync.ready(local,invite.requestId,true);
+ const failed=sync.ready({...local,membershipId:'a',isOwner:false},invite.requestId,false,true,'UNREACHABLE_POSITION');
+ assert.equal(failed.phase,'FAILED');assert.equal(failed.reason,'UNREACHABLE_POSITION');assert.equal(failed.participants.find(p=>p.membershipId==='b')?.response,'DECLINED');
+});

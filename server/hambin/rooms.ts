@@ -77,6 +77,8 @@ export function streamDto(s?: Row, roomId = "") {
         revision: Number(s.revision),
         state: s.state,
         url: s.url,
+        sourceKind: s.source_kind ?? "URL",
+        fileName: s.file_name ?? "",
         startedAt: iso(s.started_at),
         ...(s.aborted_at ? { abortedAt: iso(s.aborted_at) } : {}),
         updatedAt: iso(s.updated_at),
@@ -88,6 +90,8 @@ export function streamDto(s?: Row, roomId = "") {
         revision: 0,
         state: "EMPTY",
         url: "",
+        sourceKind: "URL",
+        fileName: "",
         startedAt: undefined,
         updatedAt: "0001-01-01T00:00:00Z",
       };
@@ -434,7 +438,12 @@ export class Rooms {
     body: Row = {},
     key?: string,
   ) {
-    if (action === "start") {
+    const local = body.sourceKind === "LOCAL_FILE";
+    if (action === "start" && body.sourceKind !== undefined && !["URL", "LOCAL_FILE"].includes(body.sourceKind)) throw new ApiError(400, "INVALID_STREAM_SOURCE");
+    if (action === "start" && local) {
+      if (typeof body.fileName !== "string" || !body.fileName.trim() || Buffer.byteLength(body.fileName) > 512 || /[\\/\x00-\x1f\x7f]/.test(body.fileName) || body.url) throw new ApiError(400, "INVALID_FILE_NAME");
+    }
+    if (action === "start" && !local) {
       if (
         typeof body.url !== "string" ||
         Buffer.byteLength(body.url.trim()) > 2048
@@ -468,7 +477,7 @@ export class Rooms {
             body.revision !== Number(prior?.revision ?? 0))
         )
           throw new ApiError(409, "STALE_STREAM_REVISION");
-        if (action === "start" && prior?.state === "ACTIVE")
+        if (action === "start" && prior?.state === "ACTIVE" && !(body.replace === true && body.revision === Number(prior.revision)))
           throw new ApiError(
             409,
             "STREAM_ACTIVE",
@@ -480,13 +489,15 @@ export class Rooms {
         if (action === "start")
           s = (
             await c.query(
-              `INSERT INTO streams(room_id,id,session_id,revision,state,url,started_at,updated_at) VALUES($1,$2,$3,$4,'ACTIVE',$5,clock_timestamp(),clock_timestamp()) ON CONFLICT(room_id) DO UPDATE SET id=EXCLUDED.id,session_id=EXCLUDED.session_id,revision=EXCLUDED.revision,state='ACTIVE',url=EXCLUDED.url,started_at=EXCLUDED.started_at,aborted_at=NULL,updated_at=clock_timestamp() RETURNING *`,
+              `INSERT INTO streams(room_id,id,session_id,revision,state,url,source_kind,file_name,started_at,updated_at) VALUES($1,$2,$3,$4,'ACTIVE',$5,$6,$7,clock_timestamp(),clock_timestamp()) ON CONFLICT(room_id) DO UPDATE SET id=EXCLUDED.id,session_id=EXCLUDED.session_id,revision=EXCLUDED.revision,state='ACTIVE',url=EXCLUDED.url,source_kind=EXCLUDED.source_kind,file_name=EXCLUDED.file_name,started_at=EXCLUDED.started_at,aborted_at=NULL,updated_at=clock_timestamp() RETURNING *`,
               [
                 id,
                 randomUUID(),
                 randomUUID(),
                 Number(prior?.revision ?? 0) + 1,
-                body.url.trim(),
+                local ? "" : body.url.trim(),
+                local ? "LOCAL_FILE" : "URL",
+                local ? body.fileName.trim() : "",
               ],
             )
           ).rows[0];
@@ -507,6 +518,8 @@ export class Rooms {
             revision: Number(s.revision),
             state: s.state,
             url: s.url,
+            sourceKind: s.source_kind ?? "URL",
+            fileName: s.file_name ?? "",
             ...(action === "start"
               ? { startedAt: iso(s.started_at) }
               : { abortedAt: iso(s.aborted_at) }),
