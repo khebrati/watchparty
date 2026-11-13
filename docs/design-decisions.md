@@ -702,3 +702,11 @@ deployment evidence remains historical.
 - **Date:** 2026-11-13
 - **Decision:** Add the existing bug icon beside the home theme/settings controls in browser and native clients. Open the same reporting dialog with existing diagnostics, attachments, offline handling and recoverable drafts.
 - **Contract:** Home submissions use authenticated `POST /v1/bug-reports` and store no room association. Cached last-room information is not used. Room reports retain membership checks; both routes share limits, durable storage and Sentry delivery.
+
+
+## DD-079 — Consolidate Hambin in the WatchParty fork (2026-11-13)
+
+- **Decision:** Publish the complete Hambin project on `main` in `khebrati/watchparty` and make it the default branch. Preserve existing `master` and `hambin-migration` branches and all Hambin, upstream WatchParty and backend development commits through an explicit history merge; do not rewrite history.
+- **Backend:** Replace the `backend/watchparty` submodule with its complete tracked source at `75bfe86b5ba4bd457b9acbe2da06c344b2350af3`. Backend, clients and shared contracts now change in one repository. This supersedes the submodule/publication arrangement in the historical migration plan and release evidence.
+- **Provenance:** Retain upstream MIT licensing and attribution. The merge connects the histories at consolidation time; it does not reconstruct historical file-level copying. Future upstream changes require deliberate adaptation to Hambin's layout and contracts.
+- **Automation:** Run the existing backend workflow from the repository root with `backend/watchparty` as its working directory; scope backend dependency updates to that directory. Deployment source paths and runtime behavior remain the same.
