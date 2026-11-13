@@ -33,3 +33,29 @@ test('bug report HTTP auth, database persistence, private membership, durable re
   await app.stop();
  }
 });
+
+test('home report persists without membership and retains durable retry semantics', {skip:process.env.HAMBIN_INTEGRATION !== 'true'}, async () => {
+ const app = await start({...config(),port:0});
+ const base = `http://127.0.0.1:${(app.server!.address() as {port:number}).port}`;
+ let uid: string | undefined;
+ try {
+  const user = await app.auth!.create({name:'Home reporter',avatar:'comet',language:'en'});
+  uid = user.identity.id;
+  const home = {reportId:randomUUID(),description:'Home language changed',clientInfo:{platform:'Android'},sessionStartedAt:new Date().toISOString(),log:'Application started\n'+'home event\n'.repeat(3000),screenshots:[]};
+  const send = (token:string, body:unknown=home) => fetch(`${base}/v1/bug-reports`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await send('invalid')).status,401);
+  assert.equal((await send(user.accessToken)).status,201);
+  assert.equal((await send(user.accessToken)).status,201);
+  const stored = (await app.db.query('SELECT * FROM bug_reports WHERE report_id=$1',[home.reportId])).rows[0];
+  assert.equal(stored.room_id,null);
+  assert.equal(stored.identity_id,uid);
+  assert.equal(stored.app_log,home.log);
+  assert.equal((await send(user.accessToken,{...home,description:'Changed'})).status,409);
+  assert.equal((await app.db.query('SELECT count(*)::int AS n FROM bug_reports WHERE report_id=$1',[home.reportId])).rows[0].n,1);
+  const rooms = new BugReports(app.db);
+  await assert.rejects(() => rooms.submit(uid!,randomUUID(),{...home,reportId:randomUUID()}), {code:'NOT_A_MEMBER'});
+ } finally {
+  if (uid) await app.db.query('DELETE FROM bug_reports WHERE identity_id=$1',[uid]);
+  await app.stop();
+ }
+});

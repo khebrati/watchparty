@@ -39,9 +39,9 @@ export class BugReports {
  private db: Pool;
  constructor(db: Pool) { this.db = db; }
  async purge() { await this.db.query("DELETE FROM bug_reports WHERE created_at < now()-interval '30 days'"); }
- async submit(uid: string, roomId: string, body: unknown) {
+ async submit(uid: string, roomId: string | null, body: unknown) {
   const r = reportPayload(body);
-  if (!/^[0-9a-f-]{36}$/i.test(roomId)) throw new ApiError(400, "INVALID_REPORT");
+  if (roomId !== null && !/^[0-9a-f-]{36}$/i.test(roomId)) throw new ApiError(400, "INVALID_REPORT");
   const hash = createHash("sha256").update(JSON.stringify({roomId,...r})).digest("hex");
   const c = await this.db.connect();
   try {
@@ -51,8 +51,10 @@ export class BugReports {
    if (existing.rowCount) {
     if (existing.rows[0].identity_id !== uid || existing.rows[0].payload_hash !== hash) throw new ApiError(409, "REPORT_CONFLICT");
    } else {
-    const member = await c.query("SELECT id FROM memberships WHERE room_id=$1 AND identity_id=$2 AND left_at IS NULL", [roomId,uid]);
-    if (!member.rowCount) throw new ApiError(403,"NOT_A_MEMBER");
+    if (roomId !== null) {
+     const member = await c.query("SELECT id FROM memberships WHERE room_id=$1 AND identity_id=$2 AND left_at IS NULL", [roomId,uid]);
+     if (!member.rowCount) throw new ApiError(403,"NOT_A_MEMBER");
+    }
     const count = await c.query("SELECT count(*)::int AS count FROM bug_reports WHERE identity_id=$1 AND created_at > now()-interval '1 day'", [uid]);
     if (count.rows[0].count >= 10) throw new ApiError(429,"RATE_LIMITED");
     await c.query("INSERT INTO bug_reports(report_id,identity_id,room_id,description,client_info,session_started_at,app_log,payload_hash,screenshots) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", [r.reportId,uid,roomId,r.description,r.clientInfo,r.sessionStartedAt,r.log,hash,JSON.stringify(r.screenshots ?? [])]);

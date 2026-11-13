@@ -27,7 +27,7 @@ export interface Dependencies {
   ): Promise<unknown>;
   identities: Identities;
   databaseReady(): Promise<boolean>;
-  submitBugReport?(uid: string, roomId: string, body: unknown): Promise<unknown>;
+  submitBugReport?(uid: string, roomId: string | null, body: unknown): Promise<unknown>;
   // Phase 3 installs membership/ticket/socket cleanup, and dispatcher health.
   revokeIdentity?(uid: string): Promise<void>;
   dispatcherReady?(): boolean;
@@ -124,7 +124,7 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     });
   });
   app.use((req, res, next) => {
-    if (/^\/v1\/rooms\/[^/]+\/bug-reports\/?$/.test(req.path)) return next();
+    if (/^\/v1\/(?:rooms\/[^/]+\/)?bug-reports\/?$/.test(req.path)) return next();
     return express.json({ limit: "8kb", strict: true })(req, res, next);
   });
   const authenticate: RequestHandler = async (req, res, next) => {
@@ -177,10 +177,10 @@ export function createApplication(configuration: Config, deps: Dependencies) {
     res.status(201).json(await sendChat(deps.rooms, (req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.body));
   });
   // Allow JSON escaping of the 8 MiB log plus base64 for up to 5 MiB of images.
-  api.post("/rooms/:roomId/bug-reports", limit("bug-report", 5), express.json({ limit: "64mb", strict: true }), async (req, res) => {
+  api.post(["/bug-reports", "/rooms/:roomId/bug-reports"], limit("bug-report", 5), express.json({ limit: "64mb", strict: true }), async (req, res) => {
     if (!deps.submitBugReport) throw new ApiError(503, "UNAVAILABLE");
     res.setHeader("Cache-Control", "no-store");
-    res.status(201).json(await deps.submitBugReport((req as AuthenticatedRequest).session.uid, String(req.params.roomId), req.body));
+    res.status(201).json(await deps.submitBugReport((req as AuthenticatedRequest).session.uid, req.params.roomId ? String(req.params.roomId) : null, req.body));
   });
   api.post("/identities/bootstrap", limit("profile", 30), async (req, res) => {
     const { uid } = (req as AuthenticatedRequest).session;
