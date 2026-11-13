@@ -20,6 +20,13 @@ export class GroupSync {
     const requestId = `source-${ctx.streamSessionId}`;
     const old = this.state(ctx.roomId);
     if (old?.requestId === requestId) return structuredClone(old);
+    // A solo source needs no consent or coordinated start. Clear any prior
+    // source attempt so snapshots cannot keep clients in its readiness flow.
+    if (!ctx.members.some(id => id !== ctx.membershipId)) {
+      this.attempts.delete(ctx.roomId);
+      if (old) this.emit(ctx.roomId, null);
+      return null;
+    }
     const s: SyncAttempt = {
       requestId, streamSessionId: ctx.streamSessionId, streamRevision: ctx.streamRevision,
       ownerMembershipId: ctx.membershipId, targetPositionMs: 0, createdAtMs: this.now(),
