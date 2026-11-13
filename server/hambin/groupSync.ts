@@ -15,6 +15,20 @@ export class GroupSync {
   private now: () => number;
   constructor(emit: (roomId: string, state: SyncAttempt | null) => void, now: () => number = Date.now) {this.emit=emit;this.now=now;}
   state(roomId: string) { return this.attempts.get(roomId) ?? null; }
+  startStream(ctx: SyncContext) {
+    this.owner(ctx);
+    const requestId = `source-${ctx.streamSessionId}`;
+    const old = this.state(ctx.roomId);
+    if (old?.requestId === requestId) return structuredClone(old);
+    const s: SyncAttempt = {
+      requestId, streamSessionId: ctx.streamSessionId, streamRevision: ctx.streamRevision,
+      ownerMembershipId: ctx.membershipId, targetPositionMs: 0, createdAtMs: this.now(),
+      revision: 0, phase: 'PREPARING', deadlineMs: this.now() + 15000,
+      participants: [...new Set([ctx.membershipId, ...ctx.members])].map(membershipId => ({ membershipId, response: 'ACCEPTED', ready: false })),
+    };
+    this.attempts.set(ctx.roomId, s);
+    return this.changed(ctx.roomId, s);
+  }
   private changed(roomId: string, state: SyncAttempt) { state.revision++; this.emit(roomId, structuredClone(state)); return structuredClone(state); }
   private current(ctx: SyncContext, requestId: string) {
     const s = this.state(ctx.roomId);

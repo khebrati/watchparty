@@ -106,7 +106,7 @@ export class Rooms {
   }
   onMembershipRemoved?: (membershipId: string) => void;
   onRoomClosed?: (roomId: string) => void;
-  onStreamChanged?: (roomId: string) => void;
+  onStreamChanged?: (roomId: string, stream: ReturnType<typeof streamDto>) => void;
   constructor(db: Pool, options: { graceMs?: number } = {}) {
     this.db = db;
     this.graceMs = options.graceMs ?? 30000;
@@ -518,7 +518,7 @@ export class Rooms {
         };
       },
     );
-    if (!("replayed" in result)) this.onStreamChanged?.(id);
+    if (!("replayed" in result)) this.onStreamChanged?.(id, result.body.stream);
     return result;
   }
   async attach(

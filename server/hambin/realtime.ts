@@ -47,6 +47,7 @@ export class Realtime {
   readonly tickets = new Map<string, Ticket>();
   readonly connections = new Map<string, Connection>();
   readonly reports = new Map<string, Report>();
+  private readonly startedSources = new Map<string, string>();
   readonly groupSync = new GroupSync((roomId, state) => {
     for (const conn of this.connections.values()) if (conn.roomId === roomId && conn.ready) conn.socket.emit("sync.state", { serverTimeMs: Date.now(), state });
   });
@@ -117,7 +118,12 @@ export class Realtime {
       for (const [secret, t] of this.tickets)
         if (t.roomId === id) this.tickets.delete(secret);
     };
-    rooms.onStreamChanged = (id) => { this.clearReports(id); this.groupSync.invalidate(id); };
+    rooms.onStreamChanged = (id, stream) => {
+      this.clearReports(id);
+      const current = this.groupSync.state(id);
+      // Outbox delivery can win the race with the HTTP post-commit callback.
+      if (current && (stream.state !== "ACTIVE" || current.streamSessionId !== stream.sessionId || current.streamRevision !== stream.revision)) this.groupSync.invalidate(id);
+    };
     this.schedule(0);
   }
   healthy() {
@@ -460,9 +466,10 @@ export class Realtime {
     conn.sequence = event.sequence;
     if (event.topic === "room.closed") conn.socket.disconnect();
   }
-  private publish(event: DurableEvent) {
+  private async publish(event: DurableEvent) {
     if (event.topic === "room.closed") {
       this.clearReports(event.roomId);
+      this.startedSources.delete(event.roomId);
       for (const [secret, ticket] of this.tickets)
         if (ticket.roomId === event.roomId) this.tickets.delete(secret);
     }
@@ -476,6 +483,26 @@ export class Realtime {
           conn.pending.push(event);
         } else this.deliver(conn, event);
       }
+    if (event.topic === "stream.started" && this.startedSources.get(event.roomId) !== event.payload.streamSessionId) {
+      const connection = [...this.connections.values()].find(c => c.roomId === event.roomId && c.ready);
+      if (!connection) return;
+      let snapshot;
+      try { snapshot = await this.rooms.snapshot(connection.uid, event.roomId); }
+      catch (error) {
+        // A leave/room close may race dispatch of an already committed start.
+        if (error instanceof ApiError && ["NOT_A_MEMBER", "ROOM_ENDED", "ROOM_NOT_FOUND"].includes(error.code)) return;
+        throw error;
+      }
+      // The outbox can contain an older start followed by an abort/replacement.
+      if (snapshot.stream.state !== "ACTIVE" || snapshot.stream.sessionId !== event.payload.streamSessionId || snapshot.stream.revision !== event.payload.revision) return;
+      const members = snapshot.members.filter(m => m.present && this.connections.get(m.membershipId)?.ready);
+      const owner = members.find(m => m.isOwner);
+      if (!owner) return;
+      this.startedSources.set(event.roomId, snapshot.stream.sessionId);
+      this.groupSync.startStream({ roomId:event.roomId, membershipId:owner.membershipId, isOwner:true,
+        streamSessionId:snapshot.stream.sessionId, streamRevision:snapshot.stream.revision,
+        members:members.map(m => m.membershipId) });
+    }
   }
   private clearReports(roomId: string) {
     for (const [id, r] of this.reports)
@@ -545,7 +572,7 @@ export class Realtime {
       );
       for (const r of rows.rows) {
         if (this.closing) return;
-        this.publish({
+        await this.publish({
           eventId: r.id,
           roomId: r.room_id,
           sequence: Number(r.sequence),
@@ -601,6 +628,7 @@ export class Realtime {
     await new Promise<void>((resolve) => this.io.close(() => resolve()));
     this.tickets.clear();
     this.reports.clear();
+    this.startedSources.clear();
     this.groupSync.clear();
   }
 }

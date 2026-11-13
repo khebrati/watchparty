@@ -14,6 +14,13 @@ test('real room sync: consent, private rewind to owner, commit barrier, cancella
   const room=(await app.rooms!.create(owner.identity.id,'Sync integration')).body.room;roomId=room.id;await app.rooms!.join(a.identity.id,room.code);await app.rooms!.join(b.identity.id,room.code);
   const os=await connect(owner),as=await connect(a),bs=await connect(b);
   const stream=(await app.rooms!.stream(owner.identity.id,roomId,'start',{url:'https://example.com/movie.mp4'})).body.stream;
+  const sourceRequestId=`source-${stream.sessionId}`;
+  for(let i=0;i<100&&app.realtime!.groupSync.state(roomId)?.requestId!==sourceRequestId;i++)await new Promise(r=>setTimeout(r,50));
+  const automatic=app.realtime!.groupSync.state(roomId)!;assert.equal(automatic.phase,'PREPARING');assert.equal(automatic.targetPositionMs,0);assert.equal(automatic.participants.length,3);assert.ok(automatic.participants.every(p=>p.response==='ACCEPTED'));
+  app.rooms!.onStreamChanged?.(roomId,stream);assert.equal(app.realtime!.groupSync.state(roomId)?.phase,'PREPARING');
+  for(const socket of [os,as,bs])assert.equal((await cmd(socket,'sync.ready',{requestId:sourceRequestId,streamSessionId:stream.sessionId,ready:true})).ok,true);
+  assert.equal(app.realtime!.groupSync.state(roomId)?.phase,'SCHEDULED');
+  await new Promise(r=>setTimeout(r,4800));assert.equal(app.realtime!.groupSync.state(roomId)?.phase,'COMPLETED');
   const requestId=randomUUID();const body={requestId,streamSessionId:stream.sessionId};
   assert.equal((await cmd(as,'sync.invite',{...body,positionMs:1000})).code,'OWNER_ONLY');
   assert.equal((await cmd(os,'playback.report',{streamSessionId:stream.sessionId,positionMs:1000,playing:false})).accepted,true);

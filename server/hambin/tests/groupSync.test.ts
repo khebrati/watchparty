@@ -9,3 +9,13 @@ test('owner disconnect cancels invitations and fails committed attempts',()=>{co
 test('readiness loss excludes viewer without shifting the scheduled start',()=>{const f=fixture();f.sync.invite(f.owner,'r',1);f.sync.respond(f.member(),'r','ACCEPTED');f.sync.commit(f.owner,'r');f.sync.ready(f.owner,'r',true);f.sync.ready(f.member(),'r',true);const at=f.sync.state('room')?.startAtMs;f.sync.ready(f.member(),'r',false);assert.equal(f.sync.state('room')?.startAtMs,at);assert.equal(f.sync.state('room')?.participants[1].response,'EXCLUDED');});
 test('owner checks and stream/request correlation reject unauthorized and stale commands',()=>{const f=fixture();assert.throws(()=>f.sync.invite(f.member(),'r',1),/OWNER_ONLY/);f.sync.invite(f.owner,'r',1);assert.throws(()=>f.sync.commit(f.member(),'r'),/OWNER_ONLY/);assert.throws(()=>f.sync.respond({...f.member(),streamSessionId:'other'},'r','ACCEPTED'),/STALE_SYNC/);assert.throws(()=>f.sync.respond(f.member(),'other','ACCEPTED'),/STALE_SYNC/);});
 test('stream changes and invitation expiry release clients',()=>{const f=fixture();f.sync.invite(f.owner,'r',1);f.sync.invalidate('room');assert.equal(f.sync.state('room')?.phase,'FAILED');f.sync.invite(f.owner,'s',2);f.advance(120000);assert.equal(f.sync.state('room')?.phase,'CANCELLED');});
+test('new stream automatically commits everyone at zero, including owner-only rooms',()=>{
+ const frames:string[]=[];let now=1000;const sync=new GroupSync((_room,s)=>{if(s)frames.push(s.phase)},()=>now);
+ const ctx:SyncContext={roomId:'room',membershipId:'owner',isOwner:true,streamSessionId:'new',streamRevision:3,members:['owner','a','b','a']};
+ assert.throws(()=>sync.startStream({...ctx,isOwner:false}),/OWNER_ONLY/);
+ const s=sync.startStream(ctx);assert.equal(s.phase,'PREPARING');assert.equal(s.targetPositionMs,0);assert.equal(s.participants.length,3);assert.ok(s.participants.every(p=>p.response==='ACCEPTED'&&!p.ready));assert.deepEqual(frames,['PREPARING']);
+ sync.ready(ctx,s.requestId,true);sync.ready({...ctx,membershipId:'a',isOwner:false},s.requestId,true);assert.equal(sync.state('room')?.phase,'PREPARING');
+ sync.ready({...ctx,membershipId:'b',isOwner:false},s.requestId,true);assert.equal(sync.state('room')?.phase,'SCHEDULED');assert.equal(sync.startStream(ctx).phase,'SCHEDULED');
+ now=6000;sync.tick();assert.equal(sync.state('room')?.phase,'COMPLETED');
+ const solo={...ctx,streamSessionId:'solo',streamRevision:4,members:[]};const single=sync.startStream(solo);assert.equal(single.participants.length,1);sync.ready(solo,single.requestId,true);assert.equal(sync.state('room')?.phase,'SCHEDULED');
+});
